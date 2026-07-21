@@ -22,7 +22,7 @@
 
 ## Build and test dependencies
 
-Vite, TypeScript, Vitest, Oxlint and vite-plugin-pwa retain their respective upstream licences. The exact dependency graph is recorded in `package-lock.json`.
+Vite, TypeScript, Vitest, Oxlint and vite-plugin-pwa retain their respective upstream licences. Dependency versions are declared in `package.json`; a reviewed lockfile should be committed before the first packaged release.
 
 ## Stockfish integration policy
 
