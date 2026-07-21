@@ -1,0 +1,123 @@
+name: Repair and publish KnightLab 0.3 web beta
+
+on:
+  push:
+    branches: [release/web-beta-0.3]
+    paths:
+      - '.github/workflows/bootstrap-web-beta-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: knightlab-web-beta-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/web-beta-0.3
+          fetch-depth: 0
+
+      - name: Recover SHA-256 verified release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          from __future__ import annotations
+
+          import base64
+          import binascii
+          import hashlib
+          from pathlib import Path
+
+          root = Path('bootstrap/web-beta-0.3')
+          encoded = ''.join(part.read_text(encoding='utf-8') for part in sorted(root.glob('part-*')))
+          target = '28480c4eef5008f784bc0cb7772869aa794f950b2c8b53c23bc913fdcffe39f8'
+          alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+          def decode_if_verified(value: str) -> bytes | None:
+              try:
+                  payload = base64.b64decode(value, validate=True)
+              except binascii.Error:
+                  return None
+              return payload if hashlib.sha256(payload).hexdigest() == target else None
+
+          payload = decode_if_verified(encoded)
+          if payload is None:
+              for delete_at in range(119_984, 120_017):
+                  if not 0 <= delete_at < len(encoded):
+                      continue
+                  without = encoded[:delete_at] + encoded[delete_at + 1:]
+                  for insert_at in range(99_992, 100_009):
+                      if not 0 <= insert_at <= len(without):
+                          continue
+                      prefix, suffix = without[:insert_at], without[insert_at:]
+                      for char in alphabet:
+                          payload = decode_if_verified(prefix + char + suffix)
+                          if payload is not None:
+                              print(f'Repaired verified upload boundary: delete={delete_at}, insert={insert_at}.')
+                              break
+                      if payload is not None:
+                          break
+                  if payload is not None:
+                      break
+
+          if payload is None:
+              raise SystemExit('Release archive could not be recovered within the two verified upload boundaries.')
+
+          output = Path('/tmp/knightlab-0.3.0.tar.gz')
+          output.write_bytes(payload)
+          print(f'Verified release archive: {target}')
+          PY
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          tar -xzf /tmp/knightlab-0.3.0.tar.gz -C .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify release
+        env:
+          KNIGHTLAB_BASE: /KnightLab/
+        run: |
+          npm ci
+          npm run verify
+
+      - name: Publish verified source to main
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'KnightLab Builder'
+          git config user.email 'actions@users.noreply.github.com'
+          base_sha="$(git rev-parse origin/main)"
+          git add -A
+          tree_sha="$(git write-tree)"
+          commit_sha="$(printf '%s\n' 'feat: ship public KnightLab 0.3 web beta' | git commit-tree "$tree_sha" -p "$base_sha")"
+          git push origin "$commit_sha:refs/heads/main"
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
