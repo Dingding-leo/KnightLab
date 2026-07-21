@@ -2,3 +2,40 @@ html { color-scheme: dark; background: #090d13; }
 body { margin: 0; min-width: 320px; min-height: 100vh; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, select, textarea { font-family: inherit; }
 button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(142,212,88,.5); outline-offset: 2px; }
+
+/*
+ * Board geometry is a product invariant: the board is square and every one of
+ * its 64 tracks is exactly one eighth of the available width and height.
+ * The doubled selectors deliberately outrank component styles and protect the
+ * layout from button intrinsic sizing, font metrics and stale PWA CSS.
+ */
+.board.board {
+  inline-size: 100%;
+  block-size: auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  align-self: start;
+  justify-self: start;
+}
+
+.board.board > .square.square {
+  inline-size: 100%;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  aspect-ratio: 1 / 1;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.board-column {
+  min-inline-size: 0;
+  align-self: start;
+}
