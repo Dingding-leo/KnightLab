@@ -5,7 +5,7 @@
 - [x] Original visual system and responsive application shell
 - [x] Legal standard-chess board
 - [x] Local hot-seat mode
-- [x] Lightweight local bot fallback
+- [x] Lightweight local bot fallback isolated in a cancellable Web Worker
 - [x] Move history, undo, flip, promotion and end-state detection
 - [x] Session recovery and completed-game storage
 - [x] FEN import and PGN export

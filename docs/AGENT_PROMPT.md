@@ -76,7 +76,7 @@ npm test
 npm run build
 ```
 
-Once a reviewed lockfile is committed, use `npm ci` in CI and autonomous runs. Run relevant Rust/Tauri, migration, integration and end-to-end checks when those layers exist. Do not claim success for commands that were not run. Do not hide warnings or flaky tests.
+Use `npm ci` instead of `npm install` once a committed lockfile exists. Run relevant Rust/Tauri, migration, integration and end-to-end checks when those layers exist. Do not claim success for commands that were not run. Do not hide warnings or flaky tests.
 
 ## Required end-of-run report
 

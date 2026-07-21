@@ -1,62 +1,48 @@
-<div align="center">
-  <img src="public/favicon.svg" width="96" alt="KnightLab icon" />
-  <h1>KnightLab</h1>
-  <p><strong>A local-first chess studio for playing, reviewing, training and improving without a subscription.</strong></p>
-</div>
+# KnightLab
 
-## Current alpha
+KnightLab is an original, local-first chess studio for playing, reviewing and improving without a subscription, account, telemetry or online multiplayer.
 
-KnightLab 0.1 is already usable as an installable offline web app. It includes:
+The current alpha already provides a legal chess board, local hot-seat play, three levels of a lightweight built-in opponent, session recovery, FEN import, PGN export, a completed-game library, basic insights, structural PGN review and a board-vision trainer. The built-in opponent now runs in an isolated Web Worker so search cannot freeze the interface, and stale searches are cancelled before they can alter a newer position.
 
-- Fully legal standard-chess moves through `chess.js`
-- Local hot-seat play
-- Three local KnightBot strength profiles
-- Move history, legal-move hints, check/checkmate/draw detection
-- Promotion choice, undo, board flip and new game
-- FEN loading, PGN copy/export and automatic session recovery
-- Automatic on-device storage for completed games
-- A local game library and initial personal statistics
-- A functional board-vision trainer
-- A deterministic PGN structure scan
-- PWA installation and offline caching
-- No account, telemetry, advertising or required network calls
+## Principles
 
-The current bot is intentionally a lightweight built-in fallback. Local Stockfish through a separately managed UCI process is the next engine milestone.
+- **Offline-first:** all runtime assets are bundled and cached by the PWA build.
+- **Private by default:** games and preferences remain on the device.
+- **Correctness before spectacle:** `chess.js` is the legal-rules authority and edge cases are tested.
+- **Original product:** KnightLab implements general chess concepts without copying Chess.com code, content, branding or trade dress.
+- **Engine isolation:** future Stockfish support will use a separately managed GPLv3 executable over UCI.
 
-## Run locally
+## Quick start
 
-Requirements: Node.js 22 or newer.
+Requires Node.js 22 or later.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the URL printed by Vite. To test the production build:
+Open the local address printed by Vite.
+
+## Verification
 
 ```bash
 npm run lint
+npm run typecheck
 npm test
 npm run build
-npm run preview
 ```
 
-## Product direction
+## Current architecture
 
-KnightLab aims to reproduce the useful *categories* of a premium chess-training platform—without copying Chess.com branding, proprietary content, text, datasets or interface designs. Multiplayer, social and community systems are deliberately out of scope.
+- React 19 + strict TypeScript
+- Vite + offline PWA service worker
+- `chess.js` for rules and PGN/FEN handling
+- Dedicated Web Worker for the built-in fallback bot
+- Browser local storage for the alpha session and game library
+- Vitest + Oxlint + GitHub Actions CI
 
-The complete feature inventory and delivery phases are in [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) and [ROADMAP.md](ROADMAP.md).
-
-## Architecture
-
-The alpha is a React + TypeScript + Vite PWA. The product remains offline-first and installable today. The desktop phase will add a Tauri shell, SQLite persistence and a local UCI engine process while preserving the same domain modules. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md) and [`ROADMAP.md`](ROADMAP.md) for the full desktop, Stockfish, review, puzzle, opening and SQLite plan.
 
 ## Licensing
 
-KnightLab's original source is source-available under the **PolyForm Noncommercial License 1.0.0**. Commercial use requires a separate written licence from Austin Liu.
-
-Stockfish is not bundled in this alpha. When integrated, it will remain a separately distributed GPLv3 UCI component with its licence and exact corresponding source information preserved. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Status
-
-This repository is under active automated development. Every material change must pass linting, type checking, tests and a production build before it is treated as complete.
+KnightLab's original source is source-available for non-commercial use under the PolyForm Noncommercial License 1.0.0. Commercial use requires a separate written licence. Third-party components retain their own licences; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

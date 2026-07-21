@@ -17,7 +17,7 @@ import {
   type GameMode,
   type MoveInput,
 } from './domain/chess'
-import { chooseBotMove } from './engine/knightBot'
+import { BotWorkerClient } from './engine/botWorkerClient'
 import {
   clearActiveSession,
   clearLibrary,
@@ -83,7 +83,8 @@ export default function App() {
   const [library, setLibrary] = useState<StoredGame[]>(loadLibrary)
   const [reviewInput, setReviewInput] = useState('')
   const [review, setReview] = useState<Review | null>(null)
-  const botBusy = useRef(false)
+  const botClient = useRef<BotWorkerClient | null>(null)
+  const botRequestVersion = useRef(0)
   const savedPosition = useRef<string | null>(null)
 
   const history = game.history()
@@ -148,18 +149,48 @@ export default function App() {
   }, [game, mode, botLevel])
 
   useEffect(() => {
-    if (mode !== 'bot' || game.turn() !== 'b' || game.isGameOver() || botBusy.current) return
-    botBusy.current = true; setThinking(true)
-    const currentFen = game.fen()
-    const timer = window.setTimeout(() => {
-      const move = chooseBotMove(currentFen, botLevel)
-      if (move) {
-        const next = cloneGame(game, startFen)
-        try { next.move(move); setGame(next) } catch { setNotice('Bot stopped safely.') }
-      }
-      botBusy.current = false; setThinking(false)
-    }, 300)
-    return () => { window.clearTimeout(timer); botBusy.current = false }
+    const client = new BotWorkerClient()
+    botClient.current = client
+    return () => {
+      botRequestVersion.current += 1
+      client.dispose()
+      botClient.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const client = botClient.current
+    if (!client || mode !== 'bot' || game.turn() !== 'b' || game.isGameOver()) return
+
+    const requestFen = game.fen()
+    const version = ++botRequestVersion.current
+    setThinking(true)
+
+    void client.search(requestFen, botLevel).then((move) => {
+      if (!move || version !== botRequestVersion.current) return
+      setGame((current) => {
+        if (current.fen() !== requestFen) return current
+        const next = cloneGame(current, startFen)
+        try {
+          next.move(move)
+          return next
+        } catch {
+          setNotice('Bot result was rejected safely.')
+          return current
+        }
+      })
+    }).catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      if (version === botRequestVersion.current) setNotice('Bot worker stopped safely.')
+    }).finally(() => {
+      if (version === botRequestVersion.current) setThinking(false)
+    })
+
+    return () => {
+      if (version !== botRequestVersion.current) return
+      botRequestVersion.current += 1
+      client.cancel()
+    }
   }, [game, mode, botLevel, startFen])
 
   const insights = useMemo(() => {

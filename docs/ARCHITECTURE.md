@@ -2,17 +2,21 @@
 
 ## Current alpha
 
-KnightLab 0.1 uses:
+KnightLab 0.2 uses:
 
 - React 19 and strict TypeScript
 - Vite and `vite-plugin-pwa`
 - `chess.js` as the legal-rules authority
 - A custom accessible board UI
-- A bounded local minimax fallback bot
+- A bounded local minimax fallback bot running in a dedicated Web Worker
 - Browser local storage for session recovery and the initial game library
 - Vitest and Oxlint
 
 The alpha contains no required network requests. All runtime assets are packaged by the build.
+
+### Alpha bot execution
+
+The built-in fallback bot is deliberately separated from React through a typed worker protocol. `BotWorkerClient` permits only one active search, terminates the worker when a search is superseded, recreates a clean worker, and accepts a result only when both request ID and FEN match. This establishes the cancellation and stale-result invariants required by the later UCI process supervisor.
 
 ## Target desktop architecture
 

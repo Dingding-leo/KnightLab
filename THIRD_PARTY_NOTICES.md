@@ -22,11 +22,11 @@
 
 ## Build and test dependencies
 
-Vite, TypeScript, Vitest, Oxlint and vite-plugin-pwa retain their respective upstream licences. Dependency versions are declared in `package.json`; a reviewed lockfile should be committed before the first packaged release.
+Vite, TypeScript, Vitest, Oxlint and vite-plugin-pwa retain their respective upstream licences. The alpha currently resolves exact package versions from `package.json`; a generated lockfile should be committed before reproducible desktop releases begin.
 
 ## Stockfish integration policy
 
-Stockfish is not bundled in KnightLab 0.1.
+Stockfish is not bundled in KnightLab 0.2.
 
 Stockfish is distributed under GNU GPL version 3. When KnightLab adds engine support, Stockfish will remain a separately managed UCI executable. Any distributed engine binary must include the GPL licence and the full corresponding source code or a precise pointer to the source that generates that exact binary. Modified engine source must remain available under GPLv3.
 
