@@ -1,0 +1,58 @@
+name: Publish KnightLab 0.3 web beta
+
+on:
+  push:
+    branches: [release/web-beta-0.3]
+    paths:
+      - 'bootstrap/web-beta-0.3/**'
+      - '.github/workflows/bootstrap-web-beta.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: knightlab-web-beta-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/web-beta-0.3
+          fetch-depth: 0
+
+      - name: Restore verified release tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat bootstrap/web-beta-0.3/part-* | base64 --decode > /tmp/knightlab-0.3.0.tar.gz
+          echo "28480c4eef5008f784bc0cb7772869aa794f950b2c8b53c23bc913fdcffe39f8  /tmp/knightlab-0.3.0.tar.gz" | sha256sum --check -
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          tar -xzf /tmp/knightlab-0.3.0.tar.gz -C .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify release
+        env:
+          KNIGHTLAB_BASE: /KnightLab/
+        run: |
+          npm ci
+          npm run verify
+
+      - name: Publish verified source to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "KnightLab Builder"
+          git config user.email "actions@users.noreply.github.com"
+          base_sha="$(git rev-parse origin/main)"
+          git add -A
+          tree_sha="$(git write-tree)"
+          commit_sha="$(printf '%s\n' 'feat: ship public KnightLab 0.3 web beta' | git commit-tree "$tree_sha" -p "$base_sha")"
+          git push origin "$commit_sha:refs/heads/main"
