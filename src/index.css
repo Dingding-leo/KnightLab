@@ -1,0 +1,4 @@
+html { color-scheme: dark; background: #090d13; }
+body { margin: 0; min-width: 320px; min-height: 100vh; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+button, select, textarea { font-family: inherit; }
+button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(142,212,88,.5); outline-offset: 2px; }
