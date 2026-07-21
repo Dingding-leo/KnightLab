@@ -69,14 +69,14 @@ Before implementing parity-inspired functionality, verify current public behavio
 Run and report actual results for:
 
 ```bash
-npm ci
+npm install
 npm run lint
 npm run typecheck
 npm test
 npm run build
 ```
 
-Run relevant Rust/Tauri, migration, integration and end-to-end checks when those layers exist. Do not claim success for commands that were not run. Do not hide warnings or flaky tests.
+Once a reviewed lockfile is committed, use `npm ci` in CI and autonomous runs. Run relevant Rust/Tauri, migration, integration and end-to-end checks when those layers exist. Do not claim success for commands that were not run. Do not hide warnings or flaky tests.
 
 ## Required end-of-run report
 
