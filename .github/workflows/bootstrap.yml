@@ -1,0 +1,53 @@
+name: Bootstrap KnightLab alpha
+
+on:
+  push:
+    paths:
+      - 'bootstrap/**'
+      - '.github/workflows/bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore verified project archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat bootstrap/part-* | base64 --decode > /tmp/knightlab.tar.gz
+          tar -xzf /tmp/knightlab.tar.gz -C .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Install and lock dependencies
+        run: npm install
+
+      - name: Verify alpha
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Publish verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf bootstrap .github/workflows/bootstrap.yml dist
+          git config user.name 'KnightLab Builder'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: ship KnightLab 0.1 local-first alpha'
+          git push origin HEAD:main
