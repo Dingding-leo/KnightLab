@@ -21,6 +21,7 @@ import type { PersistedReview } from '../review/reviewPersistence'
 import type { RetryItem } from '../review/retry'
 import { saveRetryItemsSerially } from '../review/retryQueuePersistence'
 import { evidenceSquaresForGuidance, reviewNavigationForKey, reviewPlyAfter } from '../review/reviewWorkspaceUtils'
+import { selectedReviewMoveAtPly } from '../review/reviewSelection'
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -99,6 +100,18 @@ describe('analysis workspace convenience contracts', () => {
     expect(parseTimeline).toHaveBeenCalledWith(extendedPgn)
     expect(extended).not.toBe(reviewTimeline)
     expect(liveGameContinuation(reviewTimeline, extended)).toMatchObject({ addedPly: 1 })
+  })
+
+  it('indexes the selected review move by contiguous ply while rejecting a mismatched record', () => {
+    const first = { ply: 1, classification: 'best' } as GameReview['moves'][number]
+    const second = { ply: 2, classification: 'mistake' } as GameReview['moves'][number]
+    const review = { moves: [first, second] } as Pick<GameReview, 'moves'>
+
+    expect(selectedReviewMoveAtPly(review, 0)).toBeNull()
+    expect(selectedReviewMoveAtPly(review, 1)).toBe(first)
+    expect(selectedReviewMoveAtPly(review, 2)).toBe(second)
+    expect(selectedReviewMoveAtPly(review, 3)).toBeNull()
+    expect(selectedReviewMoveAtPly({ moves: [second] }, 1)).toBeNull()
   })
 
   it('keeps Review notation and the mobile move picker addressable without per-control callbacks', () => {

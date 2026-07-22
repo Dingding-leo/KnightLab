@@ -15,3 +15,19 @@ export function disposeAndClearClient<T extends DisposableClient>(ref: { current
   ref.current = null
   current?.dispose()
 }
+
+/**
+ * Releases a known client only when it still owns the ref.
+ *
+ * A stopped async run can finish after a newer run has installed its own
+ * client. Matching by identity lets the old cleanup release its own browser
+ * Worker without ever tearing down the newer run's Worker.
+ */
+export function disposeClientIfCurrent<T extends DisposableClient>(
+  ref: { current: T | null },
+  expected: T,
+): boolean {
+  if (ref.current !== expected) return false
+  disposeAndClearClient(ref)
+  return true
+}

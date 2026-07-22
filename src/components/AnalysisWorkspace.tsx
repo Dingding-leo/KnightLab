@@ -44,7 +44,7 @@ import {
   type AnalysisSettings,
 } from '../analysis/stockfishAnalysisClient'
 import { AmbientAnalysisCache } from '../analysis/ambientAnalysisCache'
-import { disposeAndClearClient } from '../analysis/clientLifecycle'
+import { disposeAndClearClient, disposeClientIfCurrent } from '../analysis/clientLifecycle'
 import { readAnalysisFile } from '../analysis/fileImport'
 import { createLatestRequestGate } from '../analysis/latestRequest'
 import { inertAnalysisBoardInteraction } from '../analysis/analysisBoardInteraction'
@@ -59,6 +59,7 @@ import {
   reviewNavigationForKey,
   reviewPlyAfter,
 } from '../review/reviewWorkspaceUtils'
+import { selectedReviewMoveAtPly } from '../review/reviewSelection'
 import {
   resolvePlayPreviewReviewPly,
   type PlayPreviewReviewTarget,
@@ -511,7 +512,7 @@ export function AnalysisWorkspace({
     reviewHydrating,
     hasReview: review !== null,
   })
-  const selectedReview = review?.moves.find((move) => move.ply === ply) ?? null
+  const selectedReview = selectedReviewMoveAtPly(review, ply)
   const coachGuidance = useMemo(() => {
     return buildCoachGuidanceFromTimeline(timeline, selectedReview)
   }, [selectedReview, timeline])
@@ -720,7 +721,7 @@ export function AnalysisWorkspace({
     const target = requestedReviewTarget
     const targetVersion = ++reviewRunVersion.current
     reviewAbort.current?.abort()
-    reviewClient.current?.cancel()
+    disposeAndClearClient(reviewClient)
     reviewAbort.current = null
     fileImportGate.current.invalidate()
     // This queued navigation is a new user intent. Invalidate both a running
@@ -770,7 +771,7 @@ export function AnalysisWorkspace({
   const stopFullReview = () => {
     reviewRunVersion.current += 1
     reviewAbort.current?.abort()
-    reviewClient.current?.cancel()
+    disposeAndClearClient(reviewClient)
     reviewAbort.current = null
     setReviewRunning(false)
     setReviewSaving(false)
@@ -780,14 +781,18 @@ export function AnalysisWorkspace({
   const startFullReview = async () => {
     if (!timeline.moves.length || reviewRunning || engineBusy || reviewHydrating) return
     fileImportGate.current.invalidate()
-    client.current?.cancel()
+    // Browser ambient and full-review clients each own a Worker. Full review
+    // intentionally pauses candidate lines, so release that idle WebAssembly
+    // runtime before the heavier sequential job creates its own client.
+    disposeAndClearClient(client)
     const runVersion = ++reviewRunVersion.current
     // A saved-review lookup that started before the player asked for a fresh
     // review must not replace its eventual result.
     reviewLoadVersion.current += 1
     const controller = new AbortController()
     reviewAbort.current = controller
-    reviewClient.current ??= new StockfishAnalysisClient()
+    const reviewAnalysisClient = reviewClient.current ?? new StockfishAnalysisClient()
+    reviewClient.current = reviewAnalysisClient
     const selectedEffort = effortOptions[effort]
     const settings: AnalysisSettings = {
       moveTimeMs: selectedEffort.moveTimeMs,
@@ -807,7 +812,7 @@ export function AnalysisWorkspace({
     try {
       const result = await runGameReview(
         timeline,
-        (fen, requestSettings) => reviewClient.current!.analyze(fen, enginePath, requestSettings),
+        (fen, requestSettings) => reviewAnalysisClient.analyze(fen, enginePath, requestSettings),
         settings,
         setReviewProgress,
         controller.signal,
@@ -819,7 +824,6 @@ export function AnalysisWorkspace({
       setReview(result)
       setReviewOrigin(null)
       setReviewProgress(null)
-      setReviewRunning(false)
       if (!reviewStore) return
       try {
         const record = createPersistedReview(timeline, result)
@@ -853,6 +857,10 @@ export function AnalysisWorkspace({
         setReviewError(error instanceof Error ? error.message : 'Full-game review failed.')
       }
     } finally {
+      // Stop, navigation and a newer run can all replace this ref before the
+      // old promise settles. Identity-guarded disposal frees this run's browser
+      // Worker without terminating a newer full-review client.
+      disposeClientIfCurrent(reviewClient, reviewAnalysisClient)
       if (isReviewRunCurrent(runVersion)) {
         if (reviewAbort.current === controller) reviewAbort.current = null
         setReviewRunning(false)

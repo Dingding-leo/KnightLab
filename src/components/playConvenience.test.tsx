@@ -97,6 +97,28 @@ describe('move history convenience contracts', () => {
     expect(markup).toContain('data-ply="2"')
     expect(markup).toContain('data-ply="3"')
     expect(markup).toContain('Nf3')
+    expect(markup).not.toContain('move-list__show-earlier')
+  })
+
+  it('pins an early preview move while keeping a long notation list bounded', () => {
+    const moves = Array.from({ length: 200 }, (_, index) => `m${index + 1}`)
+    const markup = renderToStaticMarkup(
+      <MoveList
+        moves={moves}
+        activePly={1}
+        followingLatest={false}
+        onSelectPly={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('Show 40 earlier moves')
+    expect(markup).toContain('class="move-list__show-earlier"')
+    expect(markup).toContain('aria-label="Show 40 earlier moves; 59 earlier moves hidden"')
+    expect(markup).toContain('data-ply="1"')
+    expect(markup).toContain('aria-current="step"')
+    expect(markup).toContain('data-ply="200"')
+    expect(markup).not.toContain('data-ply="3"')
+    expect(markup.match(/data-ply="/g)).toHaveLength(82)
   })
 })
 

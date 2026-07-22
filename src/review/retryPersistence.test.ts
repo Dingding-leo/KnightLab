@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { Chess } from 'chess.js'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createRetryItem,
   recordRetryAttempt,
@@ -10,6 +11,7 @@ import {
   loadBrowserRetryItems,
   saveBrowserRetryItem,
 } from './retryPersistence'
+import { saveRetryItemsSerially } from './retryQueuePersistence'
 import { createPgnTimeline } from '../analysis/analysisModel'
 import type { ReviewedMove } from './reviewModel'
 
@@ -51,6 +53,10 @@ function retry(reviewKey = '0123456789abcdef', now = '2026-07-22T00:00:00.000Z')
   return item
 }
 
+function retryKey(index: number): string {
+  return index.toString(16).padStart(16, '0')
+}
+
 describe('browser retry queue persistence', () => {
   it('round-trips a validated retry, keeps the next due active item first, and deletes by exact key', () => {
     const storage = new MemoryStorage()
@@ -79,6 +85,70 @@ describe('browser retry queue persistence', () => {
 
     expect(loadBrowserRetryItems(storage)).toEqual([valid])
     expect(loadBrowserRetryItem('not-a-retry-key', storage)).toBeNull()
+  })
+
+  it('invalidates an old snapshot after a direct storage rewrite and never exposes its private records', () => {
+    const storage = new MemoryStorage()
+    const valid = retry()
+    saveBrowserRetryItem(valid, storage)
+
+    const exposed = loadBrowserRetryItems(storage)
+    exposed[0]!.focus = 'A caller mutation must not modify the cached record.'
+    exposed[0]!.solutionLineSan.push('e5')
+    expect(loadBrowserRetryItems(storage)).toEqual([valid])
+
+    const single = loadBrowserRetryItem(valid.retryKey, storage)!
+    single.solutionLineSan.push('e5')
+    expect(loadBrowserRetryItem(valid.retryKey, storage)).toEqual(valid)
+
+    const malformed = { ...valid, solutionSan: 'e4' }
+    storage.setItem('knightclub.retry-items.v1', JSON.stringify([malformed]))
+    expect(loadBrowserRetryItems(storage)).toEqual([])
+  })
+
+  it('strips ignored nested legacy fields before a cached retry can be exposed or re-saved', () => {
+    const storage = new MemoryStorage()
+    const valid = retry()
+    storage.setItem('knightclub.retry-items.v1', JSON.stringify([{
+      ...valid,
+      legacyMetadata: { note: 'must remain outside the retry schema' },
+    }]))
+
+    const exposed = loadBrowserRetryItems(storage)[0] as RetryItem & { legacyMetadata?: { note: string } }
+    expect(exposed.legacyMetadata).toBeUndefined()
+
+    saveBrowserRetryItem(retry('fedcba9876543210'), storage)
+    const persisted = JSON.parse(storage.getItem('knightclub.retry-items.v1') ?? '[]') as Array<Record<string, unknown>>
+    expect(persisted.every((item) => item.legacyMetadata === undefined)).toBe(true)
+  })
+
+  it('keeps a warmed 500-position browser mirror off the Chess replay path during a serial save batch', async () => {
+    const storage = new MemoryStorage()
+    const existing = Array.from({ length: 498 }, (_, index) => retry(retryKey(index)))
+    const incoming = [retry(retryKey(498)), retry(retryKey(499))]
+    storage.setItem('knightclub.retry-items.v1', JSON.stringify(existing))
+
+    // The first full read validates the legacy blob and establishes the
+    // private raw-text-versioned snapshot used by normal Train interactions.
+    expect(loadBrowserRetryItems(storage)).toHaveLength(498)
+    const move = vi.spyOn(Chess.prototype, 'move')
+    try {
+      const result = await saveRetryItemsSerially({
+        items: incoming,
+        retryStore: {
+          load: async (key) => loadBrowserRetryItem(key, storage),
+          save: async (item) => saveBrowserRetryItem(item, storage),
+        },
+      })
+
+      expect(result).toEqual({ saved: incoming, error: null })
+      expect(loadBrowserRetryItems(storage)).toHaveLength(500)
+      // Only the two newly saved records are verified. Replaying 498 retained
+      // records would require thousands of chess moves here.
+      expect(move).toHaveBeenCalledTimes(10)
+    } finally {
+      move.mockRestore()
+    }
   })
 
   it('does not write an invalid item or use unavailable browser storage', () => {

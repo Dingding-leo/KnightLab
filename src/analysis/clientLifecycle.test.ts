@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { disposeAndClearClient } from './clientLifecycle'
+import { disposeAndClearClient, disposeClientIfCurrent } from './clientLifecycle'
 
 describe('analysis client lifecycle', () => {
   it('clears a disposed ref so a Strict Mode effect replay can create a fresh client', () => {
@@ -23,5 +23,20 @@ describe('analysis client lifecycle', () => {
     const ref: { current: { dispose: () => void } | null } = { current: null }
 
     expect(() => disposeAndClearClient(ref)).not.toThrow()
+  })
+
+  it('leaves a newer client alone when an older async run finishes late', () => {
+    const older = { dispose: vi.fn() }
+    const newer = { dispose: vi.fn() }
+    const ref: { current: typeof older | null } = { current: newer }
+
+    expect(disposeClientIfCurrent(ref, older)).toBe(false)
+    expect(older.dispose).not.toHaveBeenCalled()
+    expect(newer.dispose).not.toHaveBeenCalled()
+    expect(ref.current).toBe(newer)
+
+    expect(disposeClientIfCurrent(ref, newer)).toBe(true)
+    expect(newer.dispose).toHaveBeenCalledOnce()
+    expect(ref.current).toBeNull()
   })
 })
