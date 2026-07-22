@@ -319,6 +319,16 @@ export function AnalysisWorkspace({
   const engineThreads = desktop ? threads : 1
   const engineHashMb = desktop ? hashMb : Math.min(hashMb, 128)
   const maxPly = timeline.positions.length - 1
+  const selectedNavigationMove = timeline.moves[ply - 1] ?? null
+  const selectedNavigationMoveLabel = selectedNavigationMove
+    ? `${selectedNavigationMove.moveNumber}${selectedNavigationMove.color === 'b' ? '…' : '.'} ${selectedNavigationMove.san}`
+    : null
+  const navigationStatus = selectedNavigationMoveLabel
+    ? `${selectedNavigationMoveLabel} · ${ply}/${maxPly}`
+    : `Start position · 0/${maxPly}`
+  const navigationAriaLabel = selectedNavigationMoveLabel
+    ? `After ${selectedNavigationMoveLabel}, position ${ply} of ${maxPly}`
+    : `Start position, position 0 of ${maxPly}`
   const reviewKey = useMemo(
     () => timeline.source === 'pgn' && timeline.moves.length ? createReviewKey(timeline) : null,
     [timeline],
@@ -826,7 +836,7 @@ export function AnalysisWorkspace({
         <div className="analysis-navigation" aria-label="Position navigation. Use Left and Right arrow keys to move through the game." aria-keyshortcuts="ArrowLeft ArrowRight Home End">
           <button type="button" aria-label="First position" disabled={ply === 0} onClick={() => setPly(0)}><ChevronFirst size={20} /></button>
           <button type="button" aria-label="Previous position" disabled={ply === 0} onClick={() => setPly((value) => Math.max(0, value - 1))}><ChevronLeft size={20} /></button>
-          <output aria-live="polite">Position {ply} of {maxPly}</output>
+          <output aria-live="polite" aria-label={navigationAriaLabel} title={navigationAriaLabel}>{navigationStatus}</output>
           <button type="button" aria-label="Next position" disabled={ply === maxPly} onClick={() => setPly((value) => Math.min(maxPly, value + 1))}><ChevronRight size={20} /></button>
           <button type="button" aria-label="Last position" disabled={ply === maxPly} onClick={() => setPly(maxPly)}><ChevronLast size={20} /></button>
         </div>

@@ -44,6 +44,8 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 
 **Latest phone Play-notation target evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 51 files / 252 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. MoveList contracts retain separate labelled White/Black SAN buttons and the active displayed position. At the phone breakpoint, CSS raises each button from 24 px to 44 px while preserving the two-move row grid and live-follow behavior. This is deterministic/markup evidence; a manual phone notation walkthrough remains release handoff work.
 
+**Latest Review-context and Play-engine-status evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 52 files / 255 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. Review markup now exposes the selected SAN with compact ply count plus a full accessible navigation label. Play engine-status contracts prove a real Stockfish identity/path yields Ready, authored opening cues do not claim verification, and KnightBot/malformed/failure paths produce an honest error without another probe or search. This is deterministic/markup evidence; manual Review/engine-status walkthrough remains release handoff work.
+
 ## Workspace-navigation user check
 
 1. In **Play**, scroll the page to a measurable non-zero position (for example, 550 px), then select **Review**. Confirm the page starts at the top and the current workspace heading receives focus without being scrolled away.
@@ -56,7 +58,7 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 
 ## Analysis workspace user check
 
-1. Open Review, load the current game and use first/previous/next/last plus a move-row selection; confirm the board and active move stay aligned.
+1. Open Review, load the current game and use first/previous/next/last plus a move-row selection; confirm the board and active move stay aligned, while the navigator shows Start position or the selected SAN plus its ply count without needing to scroll to the move list.
 2. Import a legal PGN and a legal FEN; confirm the ply count and board position, then verify malformed input produces a useful error without losing the previous timeline.
 3. In both the website and desktop app, select Balanced and three lines; confirm Stockfish identity, three SAN candidate lines, score/WDL and effort metrics appear.
 4. Change ply, perspective, line count and effort during analysis; confirm only the newest position/settings are displayed.
@@ -125,6 +127,7 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 5. Open the native picker, choose Stockfish, confirm Checking becomes Ready and the selected path persists.
 6. Select Custom, make a legal White move and confirm Stockfish replies under the chosen limits.
 7. During a bot search, change a setting or start a new game; confirm the stale result never appears.
+8. After a real Stockfish reply, reopen Engine settings and confirm it says Ready with the returned engine identity/path. An authored opening cue must not claim it verified Stockfish; if KnightBot takes over or the search fails, confirm Ready is replaced by an honest error.
 
 ## Completion-action browser check
 

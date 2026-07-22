@@ -91,6 +91,8 @@
 - Native Play now retains its highest cancelled request ID, so a delayed older stop cannot revive and consume CPU for a newer cancelled Stockfish search.
 - Custom time-control fields now keep uncommitted drafts local to the mounted form, retain restored custom values and avoid re-rendering the Play shell on every keystroke.
 - Review opens with Quick one-line analysis and waits for any pending bot turn instead of intentionally competing for local CPU.
+- Review's board-adjacent navigator now names the selected SAN move alongside its compact ply count, so a handoff or arrow press has visible context without scrolling to the notation panel.
+- A successful real Stockfish Play result now marks the engine ready with its returned identity/path; local opening cues remain unverified, while KnightBot fallback, malformed identity and non-abort failure paths show an honest error rather than a stale ready state.
 - Production browser builds register the service worker; development and Tauri do not, while desktop startup removes stale PWA caches left by earlier Tauri builds
 - Fresh timed games are armed until the first legal move instead of charging while the player is choosing an opening
 - Replacing an unfinished game through New game, mode, time control, FEN or Library now requires an explicit confirmation and preserves the paused game on cancel
@@ -134,6 +136,7 @@
 
 ### Verification
 
+- Review context and Play engine truthfulness: lint, typecheck, the 52-file / 255-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Review contracts retain explicit selected-SAN navigation text and accessible full context; pure Play status contracts prove real Stockfish becomes ready from the returned identity, authored opening cues stay unverified, and fallback/malformed/failure paths cannot retain a false ready badge. Manual Review/engine-status walkthrough remains release handoff work.
 - Phone Play notation targets: lint, typecheck, the 51-file / 252-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Existing MoveList contracts retain labelled white/black SAN controls and the current-position state; narrow CSS raises their targets from 24 px to 44 px without changing move selection, scrolling or live-follow behavior. Manual phone notation replay remains release handoff work.
 - Phone Review replay controls: lint, typecheck, the 51-file / 252-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. The Review contract retains labelled first/previous/next/last controls; narrow CSS reserves four 44 px arrow columns without altering the timeline, keyboard navigation, engine or persistence paths. Manual narrow-window replay remains release handoff work.
 - Play-to-Review position handoff: lint, typecheck, the 51-file / 252-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Target contracts require an integer in-range ply and exact canonical FEN, retain a matching pre-reply prefix and reject stale/mismatched positions; Review initializes to a verified target before analysis begins. A manual handoff walkthrough remains release handoff work.

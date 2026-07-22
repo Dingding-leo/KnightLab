@@ -106,6 +106,7 @@ import { handoffWorkspace } from './domain/workspaceNavigation'
 import { terminalSessionFingerprint } from './domain/libraryIdentity'
 import { HybridEngineClient, isTauriRuntime, type EngineSearchResult } from './engine/stockfishClient'
 import { engineSettingsLabel, normalizeEngineSettings } from './engine/engineSettings'
+import { playEngineFailureStatus, playEngineStatusUpdate } from './engine/playEngineStatus'
 import {
   DEFAULT_BOT_PROFILE_ID,
   botOpeningReaction,
@@ -1567,6 +1568,8 @@ export default function App() {
 
     void moveRequest.then(async (result) => {
       if (version !== botRequestVersion.current) return
+      const statusUpdate = playEngineStatusUpdate(result)
+      if (statusUpdate) setEngineStatus(statusUpdate)
       if (result.provider === 'stockfish') {
         setEngineName(result.engineName)
         setEngineDetail(`${desktop ? 'Native UCI' : 'WebAssembly'}${result.depth ? ` · depth ${result.depth}` : ''}`)
@@ -1624,6 +1627,8 @@ export default function App() {
     }).catch((error: unknown) => {
       if (error instanceof DOMException && error.name === 'AbortError') return
       if (version === botRequestVersion.current) {
+        const statusUpdate = playEngineFailureStatus(error)
+        setEngineStatus(statusUpdate)
         setNotice(`Engine stopped safely${error instanceof Error ? `: ${error.message}` : '.'}`)
       }
     }).finally(() => {

@@ -77,7 +77,8 @@ describe('analysis workspace convenience contracts', () => {
         requestedPlayPreviewTarget={target}
       />,
     )
-    expect(markup).toContain('Position 2 of 4')
+    expect(markup).toContain('1… e5 · 2/4')
+    expect(markup).toContain('aria-label="After 1… e5, position 2 of 4"')
   })
 
   it('makes browser Stockfish analysis and replay available without the desktop runtime', () => {
@@ -105,6 +106,8 @@ describe('analysis workspace convenience contracts', () => {
     expect(markup).toContain('aria-label="Previous position"')
     expect(markup).toContain('aria-label="Next position"')
     expect(markup).toContain('aria-label="Last position"')
+    expect(markup).toContain('2… Nc6 · 4/4')
+    expect(markup).toContain('aria-label="After 2… Nc6, position 4 of 4"')
     expect(markup).toContain('class="analysis-mobile-move-picker"')
     expect(markup).toContain('aria-label="Jump to a game position"')
     expect(markup).toContain('<option value="0">Start position</option>')
