@@ -84,6 +84,8 @@
 - Easy/Balanced/Strong play presets now use 60/120/200 ms, 6k/18k/45k node limits, one thread and 16/16/32 MB hash respectively; the same cancellable UI pacing floor preserves a natural reply cadence without extra search CPU.
 - The fallback KnightBot is a bounded one-ply recovery path instead of a depth-two full-tree search.
 - A shared clock runtime now confines visible-second and low-time-tenth updates to player-clock consumers, preserves exact timeout timestamps and reports one flag while every workspace remains mounted. Memoized board-square wrappers keep selection, drag, premove and keyboard focus from replacing all 64 buttons.
+- Full-game review progress now leaves an unchanged 64-square read-only board and long notation list untouched until the selected position, evidence or completed report changes.
+- Contiguous queued desktop active-session snapshots now coalesce to the newest payload; ordinary writes and clear-session actions remain FIFO barriers.
 - Review opens with Quick one-line analysis and waits for any pending bot turn instead of intentionally competing for local CPU.
 - Production browser builds register the service worker; development and Tauri do not, while desktop startup removes stale PWA caches left by earlier Tauri builds
 - Fresh timed games are armed until the first legal move instead of charging while the player is choosing an opening
@@ -112,6 +114,7 @@
 
 ### Verification
 
+- Review/persistence performance pass: lint, typecheck, the 49-file / 230-test frontend suite, full 32-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Deferred persistence contracts cover latest-snapshot coalescing, no active-write overlap, failure settlement, invalid-payload isolation and clear/FIFO barriers; the manual long-PGN Review responsiveness check remains release handoff work.
 - Play performance pass: lint, typecheck, the 47-file / 222-test frontend suite, full 32-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Clock contracts cover normal/low-time/exact-flag frames; browser/native UCI fixtures prove the lower mirrored caps and unchanged bounded two-PV route. A manual low-time/drag/premove/keyboard walkthrough remains release handoff work.
 - Named-opponent slice: lint, typecheck, the 45-file / 213-test frontend suite, full 30-test Rust suite, production web build and macOS `KnightClub.app` bundle passed. Profile contracts cover exact legal opening routes, malformed-ID rejection, legacy strength mapping and browser/native JSON payload round-trips; the manual browser/desktop profile checklist remains in `docs/TESTING.md`.
 - Responsive workspace/engine pass: lint, typecheck, the 43-file / 202-test frontend suite, full 30-test Rust suite, production web build and macOS `KnightClub.app` bundle passed. The local Vite server responded successfully at `http://127.0.0.1:5173/`; the production entry is 348.29 kB / 108.20 kB gzip, with Review/Train/Insights emitted as independent async chunks.

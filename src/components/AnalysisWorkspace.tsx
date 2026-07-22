@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { Chess } from 'chess.js'
 import {
   BarChart3,
@@ -36,6 +36,7 @@ import {
 import { disposeAndClearClient } from '../analysis/clientLifecycle'
 import { readAnalysisFile } from '../analysis/fileImport'
 import { createLatestRequestGate } from '../analysis/latestRequest'
+import { inertAnalysisBoardInteraction } from '../analysis/analysisBoardInteraction'
 import { STANDARD_START_FEN } from '../domain/chess'
 import { copyText, downloadText } from '../domain/textTransfer'
 import { runGameReview, type GameReview, type ReviewProgress } from '../review/gameReviewRunner'
@@ -81,6 +82,19 @@ interface DisplayAnalysis extends AnalysisResponse {
   lines: DisplayLine[]
 }
 
+interface AnalysisMoveRow {
+  number: number
+  white?: AnalysisTimeline['moves'][number]
+  black?: AnalysisTimeline['moves'][number]
+}
+
+interface AnalysisMoveListProps {
+  moveRows: readonly AnalysisMoveRow[]
+  ply: number
+  review: GameReview | null
+  onSelectPly: (ply: number) => void
+}
+
 const effortOptions = {
   quick: { label: 'Quick · 0.25s', moveTimeMs: 250, depth: 12 },
   balanced: { label: 'Balanced · 0.8s', moveTimeMs: 800, depth: 18 },
@@ -124,6 +138,26 @@ function ReviewBadge({ move }: { move?: ReviewedMove }) {
   if (!move) return null
   return <em className={`review-badge review-badge--${move.classification}`}>{classificationLabels[move.classification]}</em>
 }
+
+/**
+ * A full review reports progress before and after every ply. Keep the long
+ * notation list out of those progress-only renders; it only needs to update
+ * when navigation or final review data actually changes.
+ */
+const AnalysisMoveList = memo(function AnalysisMoveList({ moveRows, ply, review, onSelectPly }: AnalysisMoveListProps) {
+  return (
+    <div className="analysis-moves" aria-label="Game moves">
+      <button type="button" className={ply === 0 ? 'is-current' : ''} aria-current={ply === 0 ? 'step' : undefined} onClick={() => onSelectPly(0)}>Start position</button>
+      {moveRows.map((row) => (
+        <div className="analysis-move-row" key={row.number}>
+          <span>{row.number}.</span>
+          {row.white && <button type="button" className={ply === row.white.ply ? 'is-current' : ''} aria-current={ply === row.white.ply ? 'step' : undefined} onClick={() => onSelectPly(row.white!.ply)}>{row.white.san}<ReviewBadge move={review?.moves[row.white.ply - 1]} /></button>}
+          {row.black && <button type="button" className={ply === row.black.ply ? 'is-current' : ''} aria-current={ply === row.black.ply ? 'step' : undefined} onClick={() => onSelectPly(row.black!.ply)}>{row.black.san}<ReviewBadge move={review?.moves[row.black.ply - 1]} /></button>}
+        </div>
+      ))}
+    </div>
+  )
+})
 
 const retryPriority: Record<ReviewedMove['classification'], number> = {
   blunder: 0,
@@ -258,7 +292,7 @@ export function AnalysisWorkspace({
   }, [review, reviewKey, timeline])
   const moveRows = useMemo(
     () => {
-      const rows = new Map<number, { number: number; white?: AnalysisTimeline['moves'][number]; black?: AnalysisTimeline['moves'][number] }>()
+      const rows = new Map<number, AnalysisMoveRow>()
       for (const move of timeline.moves) {
         const row = rows.get(move.moveNumber) ?? { number: move.moveNumber }
         if (move.color === 'w') row.white = move
@@ -653,12 +687,12 @@ export function AnalysisWorkspace({
           game={boardGame}
           orientation={orientation}
           selected={null}
-          legalTargets={new Set()}
+          legalTargets={inertAnalysisBoardInteraction.legalTargets}
           lastMove={position.lastMove}
           evidenceSquares={coachEvidenceSquares}
           disabled
-          onSquareClick={() => undefined}
-          onMoveAttempt={() => undefined}
+          onSquareClick={inertAnalysisBoardInteraction.onSquareClick}
+          onMoveAttempt={inertAnalysisBoardInteraction.onMoveAttempt}
         />
 
         <div className="analysis-navigation" aria-label="Position navigation. Use Left and Right arrow keys to move through the game." aria-keyshortcuts="ArrowLeft ArrowRight Home End">
@@ -837,16 +871,7 @@ export function AnalysisWorkspace({
           <div className="analysis-empty" role="status"><Gauge size={28} /><strong>No legal continuation</strong><span>This may be a checkmate, stalemate or other terminal position.</span></div>
         )}
 
-        <div className="analysis-moves" aria-label="Game moves">
-          <button type="button" className={ply === 0 ? 'is-current' : ''} aria-current={ply === 0 ? 'step' : undefined} onClick={() => setPly(0)}>Start position</button>
-          {moveRows.map((row) => (
-            <div className="analysis-move-row" key={row.number}>
-              <span>{row.number}.</span>
-              {row.white && <button type="button" className={ply === row.white.ply ? 'is-current' : ''} aria-current={ply === row.white.ply ? 'step' : undefined} onClick={() => setPly(row.white!.ply)}>{row.white.san}<ReviewBadge move={review?.moves[row.white.ply - 1]} /></button>}
-              {row.black && <button type="button" className={ply === row.black.ply ? 'is-current' : ''} aria-current={ply === row.black.ply ? 'step' : undefined} onClick={() => setPly(row.black!.ply)}>{row.black.san}<ReviewBadge move={review?.moves[row.black.ply - 1]} /></button>}
-            </div>
-          ))}
-        </div>
+        <AnalysisMoveList moveRows={moveRows} ply={ply} review={review} onSelectPly={setPly} />
       </aside>
     </section>
   )

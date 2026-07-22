@@ -31,6 +31,11 @@ const MAX_GAME_BYTES = 1_048_576
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
+interface PendingActiveSessionSave {
+  activeSession: ActiveSession
+  completion: Promise<void>
+}
+
 export interface DatabaseSnapshot {
   schemaVersion: number
   activeSession: ActiveSession | null
@@ -110,6 +115,12 @@ function parseSnapshot(value: unknown): DatabaseSnapshot {
 export class DatabaseClient {
   private readonly invoke: Invoke
   private writeQueue: Promise<void> = Promise.resolve()
+  /**
+   * A not-yet-started active-session write. Replacing this payload avoids
+   * sending rapid move and session snapshots through SQLite, while keeping the
+   * active-session lane in its original FIFO position.
+   */
+  private pendingActiveSessionSave: PendingActiveSessionSave | null = null
 
   constructor(invoke: Invoke = defaultInvoke) {
     this.invoke = invoke
@@ -119,10 +130,42 @@ export class DatabaseClient {
     return parseSnapshot(await this.invoke('database_snapshot'))
   }
 
-  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+  private enqueueRaw<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.writeQueue.then(operation)
     this.writeQueue = result.then(() => undefined, () => undefined)
     return result
+  }
+
+  /**
+   * Any non-active-session write closes the current coalescing window so a
+   * later session snapshot cannot move ahead of that write in FIFO order.
+   */
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    this.pendingActiveSessionSave = null
+    return this.enqueueRaw(operation)
+  }
+
+  private enqueueActiveSession(activeSession: ActiveSession): Promise<void> {
+    const pending = this.pendingActiveSessionSave
+    if (pending) {
+      pending.activeSession = activeSession
+      return pending.completion
+    }
+
+    const next: PendingActiveSessionSave = {
+      activeSession,
+      // enqueueRaw starts work in a later microtask, so this placeholder is
+      // never observable by another caller before it is replaced below.
+      completion: Promise.resolve(),
+    }
+    this.pendingActiveSessionSave = next
+    next.completion = this.enqueueRaw(async () => {
+      // From this point onward the native call may be in flight. A later save
+      // must therefore form a new queued batch instead of replacing this one.
+      if (this.pendingActiveSessionSave === next) this.pendingActiveSessionSave = null
+      await this.invoke('database_save_active_session', { activeSession: next.activeSession })
+    })
+    return next.completion
   }
 
   async importLegacy(legacy: LegacyDatabaseImport): Promise<boolean> {
@@ -135,7 +178,7 @@ export class DatabaseClient {
 
   async saveActiveSession(activeSession: ActiveSession): Promise<void> {
     assertActiveSession(activeSession)
-    await this.enqueue(() => this.invoke('database_save_active_session', { activeSession }).then(() => undefined))
+    await this.enqueueActiveSession(activeSession)
   }
 
   async savePreferences(preferences: Preferences): Promise<void> {

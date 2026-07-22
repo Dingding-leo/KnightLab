@@ -78,6 +78,31 @@ const tacticsTransition = recordTacticsTerminalAttempt(createTacticsState(), SEE
   attemptedAt: '2026-07-22T00:00:00.000Z',
 })
 
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+  reject: (reason?: unknown) => void
+}
+
+function createDeferred<T = void>(): Deferred<T> {
+  let resolveDeferred: (value: T | PromiseLike<T>) => void = () => undefined
+  let rejectDeferred: (reason?: unknown) => void = () => undefined
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveDeferred = resolve
+    rejectDeferred = reject
+  })
+  return { promise, resolve: resolveDeferred, reject: rejectDeferred }
+}
+
+async function flushQueuedWork(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+function sessionWithPgn(pgn: string): ActiveSession {
+  return { ...snapshot.activeSession!, pgn }
+}
+
 describe('DatabaseClient', () => {
   it('uses task-specific commands and camelCase payloads', async () => {
     const invoke = vi.fn(async (command: string) => {
@@ -126,6 +151,179 @@ describe('DatabaseClient', () => {
       ['database_record_tactics_attempt', { progress: tacticsTransition.progress, attempt: tacticsTransition.attempt }],
       ['database_clear_active_session'],
       ['database_clear_games'],
+    ])
+  })
+
+  it('coalesces queued active-session snapshots to the latest payload', async () => {
+    const blocker = createDeferred<void>()
+    const invoke = vi.fn((command: string, args?: Record<string, unknown>) => {
+      if (command === 'database_save_preferences') return blocker.promise
+      return Promise.resolve({ command, args })
+    })
+    const client = new DatabaseClient(invoke)
+    const preferences = client.savePreferences(snapshot.preferences!)
+    await flushQueuedWork()
+
+    const first = client.saveActiveSession(sessionWithPgn('first snapshot'))
+    const middle = client.saveActiveSession(sessionWithPgn('middle snapshot'))
+    const latest = client.saveActiveSession(sessionWithPgn('latest snapshot'))
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_preferences', { preferences: snapshot.preferences }],
+    ])
+
+    blocker.resolve()
+    await Promise.all([preferences, first, middle, latest])
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_preferences', { preferences: snapshot.preferences }],
+      ['database_save_active_session', { activeSession: sessionWithPgn('latest snapshot') }],
+    ])
+  })
+
+  it('never overlaps an in-flight active-session save with its queued successor', async () => {
+    const firstWrite = createDeferred<void>()
+    const activeCalls: Array<Record<string, unknown> | undefined> = []
+    const invoke = vi.fn((command: string, args?: Record<string, unknown>) => {
+      if (command !== 'database_save_active_session') return Promise.resolve(undefined)
+      activeCalls.push(args)
+      return activeCalls.length === 1 ? firstWrite.promise : Promise.resolve(undefined)
+    })
+    const client = new DatabaseClient(invoke)
+    const first = client.saveActiveSession(sessionWithPgn('in flight'))
+    await flushQueuedWork()
+
+    const middle = client.saveActiveSession(sessionWithPgn('queued middle'))
+    const latest = client.saveActiveSession(sessionWithPgn('queued latest'))
+    await flushQueuedWork()
+
+    expect(activeCalls).toEqual([
+      { activeSession: sessionWithPgn('in flight') },
+    ])
+
+    firstWrite.resolve()
+    await Promise.all([first, middle, latest])
+
+    expect(activeCalls).toEqual([
+      { activeSession: sessionWithPgn('in flight') },
+      { activeSession: sessionWithPgn('queued latest') },
+    ])
+  })
+
+  it('settles every coalesced caller and continues queued writes after a native failure', async () => {
+    const activeWrite = createDeferred<void>()
+    const failure = new Error('SQLite is unavailable')
+    const invoke = vi.fn((command: string) => {
+      if (command === 'database_save_active_session') return activeWrite.promise
+      return Promise.resolve(undefined)
+    })
+    const client = new DatabaseClient(invoke)
+    const first = client.saveActiveSession(sessionWithPgn('first snapshot'))
+    const latest = client.saveActiveSession(sessionWithPgn('latest snapshot'))
+    const preferences = client.savePreferences(snapshot.preferences!)
+    await flushQueuedWork()
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_active_session', { activeSession: sessionWithPgn('latest snapshot') }],
+    ])
+
+    activeWrite.reject(failure)
+    const results = await Promise.allSettled([first, latest])
+    await expect(preferences).resolves.toBeUndefined()
+
+    expect(results).toEqual([
+      { status: 'rejected', reason: failure },
+      { status: 'rejected', reason: failure },
+    ])
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_active_session', { activeSession: sessionWithPgn('latest snapshot') }],
+      ['database_save_preferences', { preferences: snapshot.preferences }],
+    ])
+  })
+
+  it('keeps clearActiveSession as a barrier between pending and later snapshots', async () => {
+    const blocker = createDeferred<void>()
+    const invoke = vi.fn((command: string) => {
+      if (command === 'database_save_game') return blocker.promise
+      return Promise.resolve(undefined)
+    })
+    const client = new DatabaseClient(invoke)
+    const game = client.saveGame(snapshot.games[0])
+    await flushQueuedWork()
+
+    const beforeClear = client.saveActiveSession(sessionWithPgn('before clear'))
+    const latestBeforeClear = client.saveActiveSession(sessionWithPgn('latest before clear'))
+    const clear = client.clearActiveSession()
+    const afterClear = client.saveActiveSession(sessionWithPgn('after clear'))
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_game', { game: snapshot.games[0] }],
+    ])
+
+    blocker.resolve()
+    await Promise.all([game, beforeClear, latestBeforeClear, clear, afterClear])
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_game', { game: snapshot.games[0] }],
+      ['database_save_active_session', { activeSession: sessionWithPgn('latest before clear') }],
+      ['database_clear_active_session'],
+      ['database_save_active_session', { activeSession: sessionWithPgn('after clear') }],
+    ])
+  })
+
+  it('does not let an invalid session replace or invoke a pending valid snapshot', async () => {
+    const blocker = createDeferred<void>()
+    const invoke = vi.fn((command: string) => {
+      if (command === 'database_save_preferences') return blocker.promise
+      return Promise.resolve(undefined)
+    })
+    const client = new DatabaseClient(invoke)
+    const preferences = client.savePreferences(snapshot.preferences!)
+    await flushQueuedWork()
+    const valid = client.saveActiveSession(sessionWithPgn('valid snapshot'))
+
+    await expect(client.saveActiveSession({
+      ...sessionWithPgn('invalid snapshot'),
+      colorChoice: 'coin-flip',
+    } as unknown as ActiveSession)).rejects.toThrow('Active session is invalid')
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_preferences', { preferences: snapshot.preferences }],
+    ])
+
+    blocker.resolve()
+    await Promise.all([preferences, valid])
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_preferences', { preferences: snapshot.preferences }],
+      ['database_save_active_session', { activeSession: sessionWithPgn('valid snapshot') }],
+    ])
+  })
+
+  it('preserves FIFO order when ordinary writes split active-session batches', async () => {
+    const blocker = createDeferred<void>()
+    const secondGame: StoredGame = { ...snapshot.games[0], id: 'game-2' }
+    const invoke = vi.fn((command: string) => {
+      if (command === 'database_save_game') return blocker.promise
+      return Promise.resolve(undefined)
+    })
+    const client = new DatabaseClient(invoke)
+    const firstGame = client.saveGame(snapshot.games[0])
+    await flushQueuedWork()
+    const firstSession = client.saveActiveSession(sessionWithPgn('first session'))
+    const preferences = client.savePreferences(snapshot.preferences!)
+    const secondSession = client.saveActiveSession(sessionWithPgn('second session'))
+    const finalGame = client.saveGame(secondGame)
+
+    blocker.resolve()
+    await Promise.all([firstGame, firstSession, preferences, secondSession, finalGame])
+
+    expect(invoke.mock.calls).toEqual([
+      ['database_save_game', { game: snapshot.games[0] }],
+      ['database_save_active_session', { activeSession: sessionWithPgn('first session') }],
+      ['database_save_preferences', { preferences: snapshot.preferences }],
+      ['database_save_active_session', { activeSession: sessionWithPgn('second session') }],
+      ['database_save_game', { game: secondGame }],
     ])
   })
 

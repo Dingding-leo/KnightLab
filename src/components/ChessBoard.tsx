@@ -14,7 +14,7 @@ interface ChessBoardProps {
   game: Chess
   orientation: 'white' | 'black'
   selected: Square | null
-  legalTargets: Set<Square>
+  legalTargets: ReadonlySet<Square>
   lastMove: { from: Square; to: Square } | null
   evidenceSquares?: ReadonlySet<Square>
   /** Lets a human queue a premove while the other colour is currently to move. */
