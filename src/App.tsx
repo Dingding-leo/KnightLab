@@ -1682,13 +1682,13 @@ export default function App() {
                 paused={Boolean(clock.pausedColor)}
               />
               <div className="board-toolbar" role="toolbar" aria-label="Game actions">
-                <button type="button" onClick={undo} disabled={!canUndo} title="Undo turn (⌘/Ctrl+Z)"><RotateCcw size={18} /><span>Undo</span></button>
-                <button type="button" onClick={reset} title="New game (N)"><RefreshCw size={18} /><span>New game</span></button>
-                <button type="button" onClick={toggleClock} disabled={gameFinished || timeControl.initialMs === null} title={clock.pausedColor ? 'Resume clock' : 'Pause clock'}>
+                <button className="board-toolbar__game-action" type="button" onClick={undo} disabled={!canUndo} title="Undo turn (⌘/Ctrl+Z)"><RotateCcw size={18} /><span>Undo</span></button>
+                <button className="board-toolbar__game-action" type="button" onClick={reset} title="New game (N)"><RefreshCw size={18} /><span>New game</span></button>
+                <button className="board-toolbar__game-action" type="button" onClick={toggleClock} disabled={gameFinished || timeControl.initialMs === null} title={clock.pausedColor ? 'Resume clock' : 'Pause clock'}>
                   {clock.pausedColor ? <Play size={18} /> : <Pause size={18} />}<span>{clock.pausedColor ? 'Resume' : 'Pause'}</span>
                 </button>
-                <button type="button" onClick={() => void copyGamePgn()} title="Copy PGN"><Copy size={18} /><span>Copy PGN</span></button>
-                <button type="button" onClick={downloadGamePgn} title="Download PGN"><Download size={18} /><span>Download PGN</span></button>
+                <button className="board-toolbar__transfer-action" type="button" onClick={() => void copyGamePgn()} title="Copy PGN"><Copy size={18} /><span>Copy PGN</span></button>
+                <button className="board-toolbar__transfer-action" type="button" onClick={downloadGamePgn} title="Download PGN"><Download size={18} /><span>Download PGN</span></button>
               </div>
               {transferNotice && <div className={`play-transfer-notice play-transfer-notice--${transferNotice.kind}`} role="status">{transferNotice.message}</div>}
             </div>

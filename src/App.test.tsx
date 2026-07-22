@@ -107,6 +107,8 @@ describe('local transfer convenience contracts', () => {
 
     expect(markup).toContain('Copy PGN')
     expect(markup).toContain('Download PGN')
+    expect(markup).toContain('board-toolbar__game-action')
+    expect(markup).toContain('board-toolbar__transfer-action')
     expect(markup).toContain('Share current position')
     expect(markup).toContain('Copy current FEN')
     expect(markup).toContain('Download FEN')

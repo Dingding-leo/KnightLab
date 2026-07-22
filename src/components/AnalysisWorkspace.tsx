@@ -545,10 +545,12 @@ export function AnalysisWorkspace({
           save: (savedRecord) => reviewStore.save(savedRecord),
           record,
           isCurrent: () => isReviewRunCurrent(runVersion),
-          onSaved: (savedRecord) => {
+          // This updates durable Library/Insights metadata. It intentionally
+          // survives leaving Review after the database write has succeeded.
+          onPersisted: (savedRecord) => onReviewSaved?.(savedRecord),
+          onSaved: () => {
             setReviewSaving(false)
             setReviewOrigin('saved')
-            onReviewSaved?.(savedRecord)
           },
           onFailed: (error) => {
             setReviewSaving(false)

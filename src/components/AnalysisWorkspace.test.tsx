@@ -94,6 +94,7 @@ describe('full-review background persistence', () => {
   it('waits for storage in the background before reporting success', async () => {
     const pending = deferred<void>()
     const save = vi.fn(() => pending.promise)
+    const onPersisted = vi.fn()
     const onSaved = vi.fn()
     const onFailed = vi.fn()
 
@@ -101,6 +102,7 @@ describe('full-review background persistence', () => {
       save,
       record: persistedReview,
       isCurrent: () => true,
+      onPersisted,
       onSaved,
       onFailed,
     })
@@ -112,6 +114,8 @@ describe('full-review background persistence', () => {
     pending.resolve(undefined)
     await task
 
+    expect(onPersisted).toHaveBeenCalledOnce()
+    expect(onPersisted).toHaveBeenCalledWith(persistedReview)
     expect(onSaved).toHaveBeenCalledOnce()
     expect(onSaved).toHaveBeenCalledWith(persistedReview)
     expect(onFailed).not.toHaveBeenCalled()
@@ -119,6 +123,7 @@ describe('full-review background persistence', () => {
 
   it('reports a current save failure without a false saved notification', async () => {
     const failure = new Error('storage is full')
+    const onPersisted = vi.fn()
     const onSaved = vi.fn()
     const onFailed = vi.fn()
 
@@ -126,20 +131,23 @@ describe('full-review background persistence', () => {
       save: async () => { throw failure },
       record: persistedReview,
       isCurrent: () => true,
+      onPersisted,
       onSaved,
       onFailed,
     })
 
+    expect(onPersisted).not.toHaveBeenCalled()
     expect(onSaved).not.toHaveBeenCalled()
     expect(onFailed).toHaveBeenCalledOnce()
     expect(onFailed).toHaveBeenCalledWith(failure)
   })
 
-  it('keeps late save completions silent after a newer run or unmount', async () => {
+  it('notifies durable metadata but keeps late UI completions silent after a newer run or unmount', async () => {
     const staleSave = deferred<void>()
     const unmountedSave = deferred<void>()
     let runCurrent = true
     let mounted = true
+    const onPersisted = vi.fn()
     const onSaved = vi.fn()
     const onFailed = vi.fn()
 
@@ -147,6 +155,7 @@ describe('full-review background persistence', () => {
       save: () => staleSave.promise,
       record: persistedReview,
       isCurrent: () => runCurrent,
+      onPersisted,
       onSaved,
       onFailed,
     })
@@ -157,6 +166,7 @@ describe('full-review background persistence', () => {
       save: () => unmountedSave.promise,
       record: persistedReview,
       isCurrent: () => mounted,
+      onPersisted,
       onSaved,
       onFailed,
     })
@@ -164,6 +174,8 @@ describe('full-review background persistence', () => {
     unmountedSave.reject(new Error('late write'))
 
     await Promise.all([staleTask, unmountedTask])
+    expect(onPersisted).toHaveBeenCalledOnce()
+    expect(onPersisted).toHaveBeenCalledWith(persistedReview)
     expect(onSaved).not.toHaveBeenCalled()
     expect(onFailed).not.toHaveBeenCalled()
   })
@@ -173,6 +185,7 @@ describe('full-review background persistence', () => {
       save: async () => undefined,
       record: persistedReview,
       isCurrent: () => true,
+      onPersisted: () => { throw new Error('library callback failed') },
       onSaved: () => { throw new Error('library callback failed') },
       onFailed: () => { throw new Error('failure callback failed') },
     })).resolves.toBeUndefined()

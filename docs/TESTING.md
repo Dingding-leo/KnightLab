@@ -32,7 +32,7 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 
 **Latest desktop lazy-library evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 49 files / 236 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. Desktop startup now validates only the session/preferences bootstrap and a bounded game count; game PGNs remain in SQLite until Library or Insights is opened. A native contract corrupts an otherwise stored game payload and proves bootstrap still succeeds while the on-demand list rejects it, while a review-only database proves legacy browser data cannot overwrite non-game state. Frontend contracts reject malformed/duplicate lazy lists, preserve FIFO around save → list → clear, and merge delayed native data under newer in-memory saved/reviewed records. A manual packaged-desktop large-library walkthrough remains release handoff work.
 
-**Latest interaction-smoothness evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 50 files / 243 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. Premove tests prove conditional queueable targets, including promotion shape previews, while the board contract labels those markers as conditional and keeps final legality with `chess.js`. Review persistence tests prove a deferred save reports success or a recoverable failure without changing an already completed report, and stale/new-run or unmounted completions stay silent. The fixed 100 × 100 accessible SVG frame remains covered while pawn/queen art receives only internal optical scaling. A manual browser/packaged-desktop interaction walkthrough remains release handoff work.
+**Latest interaction-smoothness evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 50 files / 243 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. Premove tests prove conditional queueable targets, including promotion shape previews, while the board contract labels those markers as conditional and keeps final legality with `chess.js`. Review persistence tests prove a deferred save reports success or a recoverable failure without changing an already completed report; stale/new-run or unmounted UI completions stay silent while a successful durable write still updates linked Library/Insights metadata. The narrow toolbar retains its labelled DOM/Tab order through explicit game/transfer groups and expands controls to 44 px below 430 px. The fixed 100 × 100 accessible SVG frame remains covered while pawn/queen art receives only internal optical scaling. A manual browser/packaged-desktop interaction walkthrough remains release handoff work.
 
 ## Workspace-navigation user check
 
@@ -56,6 +56,7 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 8. Run `1. f3 e5 2. g4 Qh4#`; confirm the final position says no legal continuation, `g4` is a Blunder/turning point, `Qh4#` is engine-confirmed and clicking the turning point selects its position and explanation.
 9. With a longer PGN, start a full-game review and keep the current board position selected. While before/after progress advances, confirm the board and notation remain responsive and visually unchanged until you navigate, a Coach-evidence highlight changes, or the completed report arrives.
 10. Complete a review while local persistence is delayed. Confirm the scorecards and **Review full game** action return before the short “Saving review privately…” status clears. If storage fails, confirm the completed report remains visible with a save-specific recoverable error rather than an engine failure.
+11. While the same save is still pending, leave Review and open Library or Insights after it settles. Confirm the source game becomes **Reviewed** and its metrics no longer count as pending; no stale saving/saved message should be shown in the newly mounted Review workspace.
 
 ## Local PGN/FEN transfer check
 
@@ -156,6 +157,12 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 2. Let the bot reply. Confirm a legal queued move is applied immediately after the bot move, the queue disappears, and Stockfish begins a fresh search only if the premove hands the turn back to the bot. Queue a move made illegal by the reply and confirm only the bot move remains with a clear cancellation notice.
 3. In a timed increment game, queue a premove and confirm the human move consumes no elapsed time but earns the configured increment. Undo it and confirm the board and exact pre-premove clock return without replaying a stale engine result.
 4. Test both a White-side reply and a Black-side opening premove. Press Escape or use Cancel premove, then pause, restart, open a decision, load a saved game and reload the app; a queued move must never survive any of those boundaries.
+
+## Phone game-toolbar check
+
+1. At 320, 375 and 430 px viewport widths, open Play and confirm **Undo**, **New game** and **Pause/Resume** form the first row; **Copy PGN** and **Download PGN** form the second.
+2. Confirm labels stay fully readable, every control is at least 44 px tall, no horizontal page overflow appears, and Tab order remains Undo → New game → Pause/Resume → Copy PGN → Download PGN.
+3. Trigger Copy and Download and confirm their existing nearby success/error status remains visible. Repeat in the packaged desktop app narrowed to a phone-sized window before treating this layout as manually verified.
 
 ## Play-flow regression check
 

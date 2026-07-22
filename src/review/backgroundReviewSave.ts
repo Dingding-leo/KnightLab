@@ -4,19 +4,27 @@ interface BackgroundReviewSave {
   save: (review: PersistedReview) => Promise<void>
   record: PersistedReview
   isCurrent: () => boolean
+  /**
+   * A durable application-level notification. Unlike UI callbacks, this must
+   * run after a successful write even when the originating workspace has been
+   * replaced, so linked library metadata can remain truthful.
+   */
+  onPersisted: (review: PersistedReview) => void
   onSaved: (review: PersistedReview) => void
   onFailed: (error: unknown) => void
 }
 
 /**
  * Keep storage latency off the critical path to the finished review. The
- * caller deliberately does not await this task, while the current-run check
- * prevents a late completion from changing a newer workspace.
+ * caller deliberately does not await this task. A successful durable write
+ * always informs app-level metadata, while the current-run check prevents a
+ * late completion from changing a newer workspace's UI.
  */
 export async function saveCompletedReviewInBackground({
   save,
   record,
   isCurrent,
+  onPersisted,
   onSaved,
   onFailed,
 }: BackgroundReviewSave): Promise<void> {
@@ -33,6 +41,12 @@ export async function saveCompletedReviewInBackground({
       }
     }
     return
+  }
+  try {
+    onPersisted(record)
+  } catch {
+    // The write already succeeded; keep an optional app-level notification
+    // from turning this detached task into an unhandled promise.
   }
   if (isCurrent()) {
     try {
