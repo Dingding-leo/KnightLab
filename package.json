@@ -1,11 +1,18 @@
 {
-  "name": "knightlab",
+  "name": "knightclub",
   "private": true,
   "version": "0.2.0",
   "type": "module",
   "scripts": {
+    "predev": "npm run sync:stockfish",
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "prebuild": "npm run sync:stockfish",
+    "build": "tsc -b && vite build && node scripts/prepare-sites-output.mjs",
+    "sync:stockfish": "node scripts/sync-stockfish.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "typecheck": "tsc -b --pretty false",
     "lint": "oxlint",
     "test": "vitest run",
@@ -13,12 +20,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "chess.js": "^1.4.0",
     "lucide-react": "^1.25.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "stockfish": "18.0.8"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

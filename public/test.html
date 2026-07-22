@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#090d13" />
-  <title>KnightLab Browser Test Lab</title>
+  <title>KnightClub Browser Test Lab</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
@@ -37,7 +37,7 @@
   <main>
     <header>
       <div>
-        <h1>KnightLab<br />Test Lab</h1>
+        <h1>KnightClub<br />Test Lab</h1>
         <p>在本机验证网页版本所需的存储、离线、Worker、音频和 WebAssembly 能力。测试不上传任何数据。</p>
       </div>
       <span class="pill">● LOCAL · NO TELEMETRY</span>
@@ -47,14 +47,14 @@
       <div class="toolbar">
         <button id="run">重新运行测试</button>
         <button id="sound" class="secondary">播放原创测试音</button>
-        <a class="button secondary" href="./">返回 KnightLab</a>
+        <a class="button secondary" href="./">返回 KnightClub</a>
         <span id="summary">尚未运行</span>
       </div>
       <div id="results" class="grid"></div>
     </section>
 
     <footer>
-      <span>KnightLab browser compatibility diagnostics</span>
+      <span>KnightClub browser compatibility diagnostics</span>
       <span id="stamp"></span>
     </footer>
   </main>
@@ -62,7 +62,7 @@
   <script>
     const tests = [
       ['Secure context', () => [window.isSecureContext, location.protocol]],
-      ['Local storage', () => { const k='knightlab-test'; localStorage.setItem(k,'ok'); const ok=localStorage.getItem(k)==='ok'; localStorage.removeItem(k); return [ok, 'read/write available']; }],
+      ['Local storage', () => { const k='knightclub-test'; localStorage.setItem(k,'ok'); const ok=localStorage.getItem(k)==='ok'; localStorage.removeItem(k); return [ok, 'read/write available']; }],
       ['IndexedDB', () => [Boolean(window.indexedDB), window.indexedDB ? 'available' : 'missing']],
       ['Web Worker', () => { if (!window.Worker) return [false,'missing']; const blob=new Blob(['postMessage("ok")'],{type:'text/javascript'}); const worker=new Worker(URL.createObjectURL(blob)); worker.terminate(); return [true,'constructible']; }],
       ['WebAssembly', () => [Boolean(window.WebAssembly), window.WebAssembly ? 'available' : 'missing']],
@@ -70,7 +70,7 @@
       ['Service Worker API', () => [Boolean(navigator.serviceWorker), navigator.serviceWorker ? 'available' : 'missing']],
       ['PWA manifest', async () => { const response=await fetch('./manifest.webmanifest',{cache:'no-store'}); return [response.ok, response.status+' '+response.statusText]; }],
       ['Offline worker file', async () => { const response=await fetch('./sw.js',{cache:'no-store'}); return [response.ok, response.status+' '+response.statusText]; }],
-      ['KnightLab entry', async () => { const response=await fetch('./',{cache:'no-store'}); return [response.ok, response.status+' '+response.statusText]; }],
+      ['KnightClub entry', async () => { const response=await fetch('./',{cache:'no-store'}); return [response.ok, response.status+' '+response.statusText]; }],
     ];
 
     async function run() {

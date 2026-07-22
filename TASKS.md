@@ -1,0 +1,41 @@
+# KnightClub task board
+
+Status values are **Backlog**, **In Progress**, **Blocked**, **Completed** and **Verified**. Completed means implemented; Verified additionally requires tests, builds and actual operation to pass.
+
+## In Progress
+
+| Workstream | Status | Evidence |
+|---|---|---|
+| Responsive engine and rendering pass | Verified | Opening Play creates no Stockfish or KnightBot worker; presets are single-threaded and node-bounded, the fallback has a finite one-ply budget, normal clocks repaint only when their visible value changes, and the memoized board skips clock-only work. A pending bot turn blocks optional Review analysis until its move finishes. Frontend suite (43 files / 201 tests), lint, typecheck, web build, full Rust suite and browser walkthrough passed. |
+| Original local Tactics Sprint | Verified | Fresh Train opens an immediate 3-position no-spoiler sprint with legal local replay, hints/reveal/reset, terminal outcome metrics and bounded browser/SQLite v5 persistence. The source tab order keeps personal review and vision available without mounting competing keyboard listeners. |
+| Phase 2 persistent review and coaching | In Progress | Completed reports use schema v5 SQLite or bounded browser fallback, restore by canonical game key and mark linked Library games Reviewed; selected adverse moves receive conservative, rules-proven Coach evidence directly on the board, with keyboard replay navigation and no additional Coach/review search. A self-contained retry queue is persisted independently of report retention; resumable work and deeper tactical proof remain |
+| Phase 3 recorded-review continuation | Completed | Train reconstructs a completed review's saved Stockfish `solutionLineSan` PV locally rather than using original-PGN continuation. It auto-plays recorded opponent replies, retains only transient line progress, advances scheduling once after a full unassisted line and fails closed for malformed non-empty saved PVs. 20 focused tests, the 36-file/167-test frontend suite, lint, typecheck, web/Rust/Tauri builds and a real browser Review → Train continuation walkthrough passed; optional hint/reveal/skip manual regression remains in `docs/TESTING.md`. |
+| UX workspace handoff | Completed | A real primary-workspace transition returns the player to the top and focuses the named workspace heading, while an active-tab click preserves the current reading position. Focused 5-file/27-test and full 35-file/155-test frontend suites, lint, typecheck, web build, 23 Rust tests, the macOS Tauri bundle and in-app browser evidence passed; dedicated desktop UX validation remains pending. |
+| Play UX follow-up | In Progress | First-move clock arming, unfinished-game replacement confirmation, touch/pen pointer dragging, clearer pieces, player-side choice, a safe one-move bot-turn premove and Library search/filter/direct-review controls are implemented; browser regression is still in progress |
+
+## Backlog
+
+| Workstream | Status | Next deliverable |
+|---|---|---|
+| Phase 3 training | Backlog | Licensed tactics importer and broader adaptive training queue |
+| Phase 4 product polish | Backlog | Original bot profiles, themes, ratings and signed packages |
+
+## Completed
+
+| Workstream | Status | Evidence |
+|---|---|---|
+| Phase 2 in-session full-game review | Verified | Cancellable per-move Stockfish jobs, nonlinear accuracy, contextual classes, turning points and two real native four-ply reviews including checkmate |
+| Phase 1 local PGN/FEN transfer | Completed | Explicit Play PGN/FEN controls with adjacent feedback and keyboard-focusable local Review import are integrated. Picker imports reject declared oversize before `File.text()`, retain only the newest selection and accept valid PGN misnamed `.fen`. The final 35-file/155-test suite, lint, typecheck, web build, 23 Rust tests and the macOS Tauri bundle passed. Browser verification covered the controls, valid FEN and invalid-FEN preservation; desktop transfer walkthrough remains documented as handoff work. |
+| UX desktop board clarity | Completed | Above 920 px, the board-stage viewport reserve is 180 px rather than 260 px, expanding the wide-board target from about 541 px to about 621 px at a 1470 × 801 audit while the existing roughly 96.5%-of-square pieces remain unchanged. At 920 px and below the 260 px reserve remains, and at 700 px and below the board remains full width. The 35-file/155-test suite, typecheck, lint, web build and macOS Tauri bundle passed; a manual packaged-desktop walkthrough remains pending. |
+| Phase 1 player-side selection | Completed | White/Black/Random bot setup resolves a stable player side through engine turns, clocks, completion actions, whole-turn undo, active-session/Library persistence and accessible controls; automated checks pass, manual browser/native regression remains documented |
+| Phase 1 safe premove | Completed | One non-persisted premove can be queued while the local bot thinks; non-authoritative shape checks preserve en-passant/line-opening possibilities, `chess.js` validates the actual reply position, and bot-plus-premove clock/undo accounting stays atomic; automated checks pass, manual browser/native regression remains documented |
+| Phase 2 Coach Evidence v1 | Verified | Pure legal-board evidence for restored or fresh review errors: mate/check, unsupported moved piece, direct double attack and absolute king pin; no added engine request |
+| Phase 2 retry-from-mistake foundation | Completed | Eligible normal-confidence review errors create self-contained private prompts; Train reconstructs the pre-move position without spoilers, gives honest legal-alternative feedback and persists 1/3/7/14/30 scheduling through browser storage or SQLite schema v5. The saved-PV continuation enhancement is tracked separately above, with its full gates and local interactive regression recorded there. |
+| Phase 2 MultiPV analysis board | Verified | Dedicated cancellable Stockfish analysis, PGN/FEN navigation, browser replay, real native 3-line analysis and full build/test gates |
+| Phase 1 SQLite persistence | Verified | 52 frontend tests, 13 Rust tests, schema v2 import plus real native move/quit/reopen recovery |
+| Phase 1 engine settings | Verified | 47 frontend tests, 9 Rust tests, real Stockfish custom search, browser persistence and native picker/probe/custom-move operation |
+| Phase 1 game completion actions | Verified | 40 frontend tests, exercised draw decline/accept, resignation cancel/confirm, bot rejection, persisted PGN results and sound preference |
+| Phase 1 clocks and time controls | Verified | 31 frontend tests, timestamp clock unit coverage, timed hot-seat/bot browser play, timeout/pause/undo recovery and production build |
+| Play convenience usability pass | Verified | Three exercised play flows, 20 frontend tests, responsive browser replay, PWA and Tauri release builds |
+| Phase 1 Stockfish desktop vertical slice | Verified | 16 frontend tests, 7 Rust tests, real Stockfish 18 smoke, web and Tauri release builds, native UI move |
+| Browser alpha and isolated KnightBot fallback | Verified | 10 frontend tests, production PWA build, 2026-07-21 changelog |

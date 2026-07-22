@@ -1,8 +1,8 @@
-# KnightLab product specification
+# KnightClub product specification
 
 ## Mission
 
-Build the strongest practical local-first chess improvement application that a player can own and use indefinitely without a subscription. KnightLab should cover nearly every valuable single-player, analysis, training, library and personal-data capability found in modern premium chess platforms while remaining original, private and offline-capable.
+Build the strongest practical local-first chess improvement application that a player can own and use indefinitely without a subscription. KnightClub should cover nearly every valuable single-player, analysis, training, library and personal-data capability found in modern premium chess platforms while remaining original, private and offline-capable.
 
 ## Competitive feature inventory
 
@@ -10,7 +10,7 @@ This inventory was compiled from Chess.com's current help collections and featur
 
 ### Included product domains
 
-| Domain | KnightLab target |
+| Domain | KnightClub target |
 | --- | --- |
 | Computer play | Configurable Stockfish opponents, approximate ratings, styles, odds, time controls, custom positions and opening starts |
 | Local play | Hot-seat games, configurable clocks, chess clock mode, autosave and crash recovery |
@@ -31,13 +31,13 @@ This inventory was compiled from Chess.com's current help collections and featur
 
 ### Explicitly excluded
 
-KnightLab will not build online matchmaking, rating pools, online daily chess, leagues, live multiplayer tournaments, clubs, chat, messaging, social feeds, public leaderboards, live classrooms or puzzle battles. Local hot-seat, offline tournaments and solo challenges remain valid.
+KnightClub will not build online matchmaking, rating pools, online daily chess, leagues, live multiplayer tournaments, clubs, chat, messaging, social feeds, public leaderboards, live classrooms or puzzle battles. Local hot-seat, offline tournaments and solo challenges remain valid.
 
 ## Legal and content boundaries
 
 - Never copy Chess.com code, text, lesson content, videos, artwork, bots, names, coach scripts, proprietary puzzle data or visual trade dress.
 - Product concepts and chess functionality must be implemented independently.
-- Original educational content must be written for KnightLab or imported only under compatible terms.
+- Original educational content must be written for KnightClub or imported only under compatible terms.
 - Public game and puzzle datasets must have documented licences and reproducible import scripts.
 - Stockfish must remain under GPLv3 with exact source and licence obligations preserved.
 
@@ -46,10 +46,14 @@ KnightLab will not build online matchmaking, rating pools, online daily chess, l
 - Lichess database exports: CC0, suitable for puzzles, games and evaluations after local filtering and validation.
 - `lichess-org/chess-openings`: CC0 ECO/opening-name dataset.
 - User-provided PGN/FEN files.
-- User games created in KnightLab.
+- User games created in KnightClub.
 - Curated original lesson, opening and endgame content.
 
 No large dataset should be committed to the main Git repository. Use resumable import tooling, checksums, version metadata and local indexes.
+
+## Current delivery
+
+KnightClub currently supports White, Black and resolved-random local bot games, a single safe non-persisted premove while the bot thinks, confirmed resignation, hot-seat draw response, deterministic bot draw decisions, typed completion persistence, result-aware PGN, optional original synthesized game sounds and Stockfish play/review with preset, Elo and custom resource/search settings. The website runs a checksum-pinned Stockfish 18 Lite WebAssembly Worker and keeps KnightBot only for failure recovery; desktop uses a separately installed native Stockfish executable. Desktop sessions, preferences and completed games use versioned SQLite with transactional legacy import and corruption backup; the browser uses bounded localStorage.
 
 ## Quality bar
 

@@ -1,60 +1,146 @@
 # Architecture
 
-## Current alpha
+## Current vertical slice
 
-KnightLab 0.2 uses:
+KnightClub 0.2 uses:
 
 - React 19 and strict TypeScript
 - Vite and `vite-plugin-pwa`
 - `chess.js` as the legal-rules authority
+- A pure absolute-timestamp chess-clock state machine
+- A pure player-side domain for resolved White/Black/Random bot ownership
+- A pure completion domain for resignation, draw agreement and timeout
+- Lazy, optional Web Audio synthesis with no external audio assets
 - A custom accessible board UI
-- A bounded local minimax fallback bot running in a dedicated Web Worker
-- Browser local storage for session recovery and the initial game library
+- A Tauri 2 desktop shell with a Rust UCI process supervisor
+- Stockfish for browser and desktop bot moves/MultiPV review, plus a bounded minimax failure fallback
+- A normalized engine-settings domain plus native executable picker and UCI probe
+- A fail-closed completed-review-to-retry adapter and due-first personal Train queue
+- Versioned SQLite as the desktop authority, with bounded browser localStorage compatibility
 - Vitest and Oxlint
 
-The alpha contains no required network requests. All runtime assets are packaged by the build.
+The application contains no required runtime network requests after its static files are delivered. Website builds package checksum-verified Stockfish 18 Lite JavaScript/WebAssembly assets and cache them with the PWA; the desktop app uses a separately installed local executable.
 
-### Alpha bot execution
+### Clock execution
 
-The built-in fallback bot is deliberately separated from React through a typed worker protocol. `BotWorkerClient` permits only one active search, terminates the worker when a search is superseded, recreates a clean worker, and accepts a result only when both request ID and FEN match. This establishes the cancellation and stale-result invariants required by the later UCI process supervisor.
+`ClockState` stores each side's remaining time at an absolute `turnStartedAtMs` anchor. A display-only timer derives snapshots without mutating clock state or writing storage: it wakes at the next visible whole-second boundary above 20 seconds and at the next tenth below it. A separate deadline tick still observes exact flag fall. This avoids rebuilding the board ten times a second during ordinary play while preserving low-time tenths. A newly configured timed game is ready but unarmed, so neither clock charges until its first legal move. Legal human and accepted engine moves settle the mover, apply Fischer increment, reset delay and activate the opponent exactly once. Pause settles first, timeout cancels engine work and locks the board, and undo restores the settled pre-move clock with a fresh anchor.
 
-## Target desktop architecture
+### Player-side execution
+
+`humanColor` is a resolved game role (`w` or `b`), while `orientation` remains a separate presentation preference. A bot setup request may be White, Black or Random; Random resolves only when a fresh game begins and stores both the request and the resolved side, so session restore cannot silently redraw it. The engine searches whenever the opposite side is to move, allowing Stockfish to make the opening move when the user plays Black. Input, clocks, player bars, draw/resignation attribution and whole-turn undo all use this resolved ownership. Opening a restart or resignation decision immediately invalidates an active bot request; cancelling a decision resumes a fresh search only for the unchanged position.
+
+### Premove execution
+
+During a local bot turn, one human premove may be queued without restarting the active Stockfish request. Its preview intentionally checks only source ownership, target ownership and plausible piece geometry: the pending bot move can make an en-passant capture, open a line or remove a check. When the accepted bot result arrives, the application clears the queue and asks a cloned `chess.js` position to apply it as the sole legality authority. A rejected premove leaves the bot position intact and reports the cancellation. A successful premove completes both clock moves at the same timestamp, so it consumes no human time but receives the normal increment; both settled snapshots are retained for undo. Queues are visual-only, never persisted, and clear on any pause, restart, terminal outcome, undo, position load or hydration.
+
+### Play-flow safeguards
+
+New game, time-control, mode, FEN-load and saved-game actions share one restart gate. It asks for confirmation only when replacing an unfinished game, pauses the current clock while the decision is open, and restores that clock on cancel. The board keeps click/tap and keyboard selection while Pointer Events with capture make drag-to-move work for mouse, touch and pen without a separate HTML drag implementation.
+
+### Workspace-navigation handoff
+
+A primary-workspace change is a navigation handoff, not a game-state action. After React has rendered a different Play, Review, Train or Library workspace, the shared handoff contract moves the window to the top and places programmatic focus on the current `#workspace-title` with `preventScroll`. The `<main>` landmark is named by that same title through `aria-labelledby="workspace-title"`, while the heading's `tabIndex={-1}` keeps it out of the ordinary tab sequence.
+
+Activating the already selected workspace is deliberately a no-op: it neither scrolls nor moves focus. This preserves a reader's place while a real workspace change gives pointer, keyboard and screen-reader users a stable beginning and landmark name.
+
+### Completion execution
+
+`GameTermination` is the single serializable authority for non-board endings: timeout, resignation and draw agreement. Opening a destructive confirmation or hot-seat draw response settles and pauses the clock, which also cancels active engine work through the existing effect lifecycle. Decline/cancel resumes the same settled clock; confirmation locks the board and saves one result-aware PGN. Bot draw decisions are deterministic from material, game phase and strength until full engine evaluation is available.
+
+### Fallback bot execution
+
+The built-in fallback bot is deliberately separated from React through a typed worker protocol. It is created only when the browser or native Stockfish runtime cannot complete a bot search. `BotWorkerClient` permits only one active search, terminates the worker when a search is superseded, recreates a clean worker, and accepts a result only when both request ID and FEN match. Its one-ply, node-bounded search is an outage safety net, not a second high-CPU engine.
+
+## Runtime architecture
 
 ```text
 React UI
   ├── chess domain (pure TypeScript)
+  ├── clock domain (pure TypeScript)
+  ├── completion domain + accessible decision dialog
+  ├── optional synthesized game audio
   ├── review/training services
-  ├── persistence interfaces
-  └── engine interface
-          │ typed commands/events
+  │     ├── analysis timeline + strict cancellable Stockfish analysis client
+  │     ├── sequential game-review runner + pure accuracy/classification model
+  │     └── Coach evidence + fail-closed retry construction, local saved-PV replay and scheduling
+  ├── DatabaseClient + localStorage compatibility repositories
+  └── HybridEngineClient (lazy engines)
+        ├── StockfishClient (desktop) ── typed Tauri command ──┐
+        ├── BrowserStockfishEngine (website, on demand)       │
+        │     └── Web Worker + UCI ── Stockfish.js WASM       │
+        └── BotWorkerClient (lazy failure recovery)           │
 Tauri command boundary
-  ├── SQLite repositories + migrations
-  ├── import/export and backup
-  └── UCI process supervisor
+  ├── DatabaseState
+  │     └── SQLite repository + migrations/recovery
+  └── StockfishState
+        ├── executable discovery + validation
+        ├── request cancellation watermark
+        └── persistent UCI process supervisor
+  └── AnalysisState
+        ├── independent request cancellation watermark
+        └── dedicated persistent UCI process supervisor
           │ stdin/stdout text protocol
-User-selected or separately downloaded Stockfish executable (GPLv3)
+Separately installed Stockfish executable (GPLv3)
 ```
+
+`chess.js` remains the only legal-rules authority in the UI. The engine proposes a UCI move; the current FEN and request ID must match, UCI syntax is validated, and `chess.js` applies the move. This keeps engine output outside the trusted game-state boundary.
+
+### Review analysis execution
+
+The frontend builds a complete immutable position timeline from bounded PGN/FEN input using `chess.js`. Selecting a ply cancels the old request and submits the exact current FEN to an isolated analysis client. On desktop, Rust configures full-strength native Stockfish and returns typed MultiPV data. In the website, a dedicated Worker runs Stockfish 18 Lite WebAssembly and the TypeScript UCI adapter parses the same score, WDL, PV and search metrics. The UI validates the response and derives SAN without trusting engine text as game state. Exact scores are retained over later bound-only updates.
+
+`runGameReview` composes that same strict client into a sequential, abortable job. It obtains MultiPV before each move and a single line after each non-terminal move, normalizes both to the mover, then passes immutable inputs to the pure review model. UI progress is monotonic by completed ply; Stop aborts the job and cancels the active native process or browser Worker search. Starting a job pauses interactive analysis, and changing the loaded timeline invalidates the job. A bot turn has product-level priority: Review's ambient search and full-review action wait for it instead of competing for local CPU.
+
+After a completed PGN review, the frontend creates a deterministic review key from canonical start FEN and main-line UCI moves, validates a bounded versioned record and saves it before showing a retained status. `ReviewStorage` uses desktop SQLite after database hydration or bounded browser localStorage otherwise. Hydration is versioned so an asynchronous result for an older import cannot replace the active timeline. A storage failure leaves the completed result visible with an explicit non-retention error. Matching Library records are updated through the normal game upsert and receive a Reviewed marker.
+
+Coach evidence is derived synchronously from an already completed review; it never starts another Coach/review engine request or mutates the saved report. The pure coach domain reconstructs the reviewed move's exact pre- and post-move FENs, validates the recorded best UCI move with `chess.js`, and may expose only directly provable facts: a mating move, a check, an unsupported moved piece, a direct double attack, or an absolute king pin. Limited-confidence, malformed or unprovable cases degrade to a neutral comparison with the recorded SAN line. The React card projects its verified squares into a presentation-only board highlight and the Review workspace owns scoped replay-key navigation; both remain derived state, so restored reports behave identically. Ordinary position analysis may still follow the user-selected replay ply when it is enabled.
+
+### Local PGN/FEN transfer boundary
+
+Play exposes the current game's PGN through explicit copy and plaintext-download actions, and exposes the current FEN through the Position tools. Its success or recoverable-error status is rendered beside the Play toolbar. The transfer adapter attempts the platform Clipboard API first; if a browser or WebView rejects it, it tries a selected temporary textarea copy path and returns a user-facing result rather than letting a rejected promise escape. Downloads are generated from local plaintext `Blob` object URLs and are released after the browser receives the click.
+
+Review continues to accept pasted PGN/FEN and may read a user-selected local `.pgn`, `.fen` or `.txt` file through a visible keyboard-focusable picker button. Selection is not an upload and does not write a Library record. The picker rejects a declared file over 512 KiB before calling `File.text()`, then the file boundary treats both the reported size and actual UTF-8 text as untrusted; a FEN is additionally capped at 1 KiB. Extension/content detection is only a parser hint: a valid PGN misnamed `.fen` may fall through to PGN parsing, while `chess.js` timeline creation remains the notation authority. A request gate permits only the newest pending file selection to apply. No file or pasted value is applied until parsing produces an immutable timeline, so file-read, size, notation or parser failures preserve the prior Review timeline.
+
+### Personal retry execution
+
+The retry adapter consumes only a finished review, its immutable timeline and optional already-derived Coach focus. It replays the canonical timeline with `chess.js`, confirms that the selected normal-confidence adverse move belongs to that source ply and that both the played and recorded solution UCI moves are legal from the exact pre-move FEN. It snapshots a bounded `solutionLineSan` only from the completed review's saved Stockfish principal variation (`bestLineSan`), never from the original PGN continuation after the error. Any source mismatch creates no prompt. Review can save one selected prompt or a small ranked batch; Train reconstructs the stored FEN and orients the board to the colour that made the reviewed move.
+
+Before exposing a Train line, the retry-line adapter reconstructs every saved SAN ply locally with `chess.js`, checks its canonical UCI/SAN representation and confirms that its first ply is the saved solution. An explicitly empty legacy `solutionLineSan` safely uses that independently verified first move; a non-empty stored line that cannot replay in full is unavailable rather than shortened or guessed. No retry action invokes Stockfish or changes the saved report. Until a user asks for a hint/reveal or makes an attempt, Train holds back the recorded answer, future PV plies and Coach evidence. For a valid multi-ply PV, Train accepts only the reviewed player's next exact move, auto-applies the next recorded opponent PV reply, then prompts for the next player move. A legal alternative is only reported as not being on the saved review line; alternatives are not scored.
+
+Only a full unassisted saved-line replay advances the five-step 1/3/7/14/30-day schedule, and it writes that success once at the terminal line state. A non-matching legal attempt, hint-assisted completion, reveal or skip resets the streak and keeps the prompt due immediately. The in-progress board, cursor, selection and hint state are transient React session state; the self-contained retry item retains its durable prompt and schedule independently of completed-review retention. **Back to review** loads the retained source PGN and focuses its recorded ply; if a bounded old report was pruned, the retry remains usable but the source-review return clearly reports that it is unavailable.
+
+Production browser builds register the PWA service worker; Vite development and Tauri deliberately do not. Tauri startup removes any service worker/cache left by older builds so an upgraded desktop package cannot continue serving stale UI from `tauri://localhost`.
+
+### Engine settings execution
+
+`EngineSettings` is normalized before persistence and again before every frontend request. Preset profiles remain adapter-owned; Elo and Custom profiles send bounded skill, move-time, depth, node, MultiPV, thread and Hash values. Rust independently rejects desktop values before emitting any UCI command. The browser adapter enforces its single-threaded build and caps Hash at 128 MB. A probe completes `uci`/`isready` and returns the real identity plus native path or WebAssembly identity without touching game state. Choosing a new path or changing search settings invalidates the current frontend search through the existing effect cleanup.
 
 ## Engine isolation rules
 
-- Do not link Stockfish into KnightLab's original source.
-- Treat it as a separately managed executable communicating through UCI text streams.
-- Record version, binary checksum, platform, source URL and engine settings with cached analysis.
+- Keep Stockfish outside KnightClub's original source and communicate only through UCI text streams.
+- Run the website engine in a dedicated Worker; run the desktop engine as a separately managed process.
+- Pin and verify every distributed engine asset, include GPLv3, and publish the exact corresponding source location beside it.
+- Record version, checksum/runtime, source URL and engine settings when analysis caching is introduced.
 - Reject stale responses using request identifiers and position hashes.
 - Implement stop, timeout, restart, bounded queues and process cleanup.
 - Never block the UI thread.
 
-## Persistence evolution
+## Failure model
 
-The browser alpha uses local storage only for a small, simple data model. Before large PGN or puzzle imports, introduce a repository abstraction and Tauri SQLite implementation with:
+- Discovery or Worker failure: report the error for verification and use the isolated KnightBot fallback for bot play.
+- Invalid input/output: reject it without changing the board.
+- Cancellation: frontend invalidates the request immediately; Rust observes an atomic marker or the browser adapter sends `stop` and drains the old `bestmove`.
+- Timeout, process exit or an unresponsive Worker: discard that engine runtime so the next request starts cleanly.
+- Late result: reject unless both request ID and FEN equal the active search.
+- Flag fall: settle to zero, invalidate engine work, persist the timeout result and reject all later moves.
+- Completion dialog: pause before the decision; on cancel resume from the settled anchor, on confirmation persist and reject later moves.
 
-- Forward-only schema migrations
-- Transactional imports
-- Duplicate hashes
-- Backup/restore
-- Corruption detection
-- Indexed position, opening, date and tag queries
+## Persistence execution
+
+Desktop startup opens `knightclub.sqlite3` in the Tauri application-data directory, runs `quick_check`, applies forward-only `PRAGMA user_version` migrations and then exposes only task-specific commands. Schema v5 stores singleton active-session/preferences JSON, indexed completed-game rows, a separate bounded `reviews` repository, a bounded self-contained `retry_items` repository, and bounded tactics progress/immutable-attempt records. If the database is empty, the frontend imports bounded legacy localStorage state in one transaction; an existing database remains authoritative. Writes are serialized in the frontend and again by the Rust mutex so an older state cannot overtake a newer one.
+
+Malformed or oversized payloads are rejected independently in TypeScript and Rust. Review payloads additionally have their PGN-derived identity, canonical FEN and a one-to-one per-ply match between the saved report and its source timeline checked at the frontend boundary; native code independently rejects absent, incomplete or non-contiguous review move lists before a record is saved or restored. Retry records use a separate item schema, bounded metadata and due-first index; TypeScript additionally reconstructs the FEN and validates the played/solution move facts before they enter UI state. A non-empty stored `solutionLineSan` must also reconstruct completely as a canonical local PV; only an explicitly empty legacy field may use the verified first-move fallback. A database that fails integrity checking is renamed to a timestamped `.corrupt-*.bak` file (including WAL/SHM sidecars) before a clean schema is created; the Library reports the recovery path. Browser/PWA builds keep bounded localStorage compatibility repositories for games, completed reviews and retry items. Later phases still need duplicate PGN hashes, manual backup/restore, and indexed position, opening and tag queries.
 
 ## Trust boundaries
 
-Untrusted inputs include PGN, FEN, imported datasets, engine output, file paths and database backups. Parse them defensively, bound their size, reject malformed records and never interpolate them into shell commands.
+Untrusted inputs include PGN, FEN, imported datasets, engine output, file paths, persisted engine settings, retry prompts and database backups. Parse them defensively, bound their size, reject malformed records and never interpolate them into shell commands. Engine settings are bounded independently in TypeScript and Rust before they can become UCI commands.

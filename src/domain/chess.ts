@@ -46,6 +46,24 @@ export function gameResult(game: Chess): string {
   return '*'
 }
 
+export function recordedGameResult(game: Chess): string {
+  const boardResult = gameResult(game)
+  if (boardResult !== '*') return boardResult
+  const headerResult = game.getHeaders().Result
+  return ['1-0', '0-1', '1/2-1/2'].includes(headerResult ?? '') ? headerResult : '*'
+}
+
+export function completedPgn(game: Chess, startFen: string, result: string, termination: string): string {
+  const completed = cloneGame(game, startFen)
+  if (startFen !== STANDARD_START_FEN) {
+    completed.setHeader('SetUp', '1')
+    completed.setHeader('FEN', startFen)
+  }
+  completed.setHeader('Result', result)
+  completed.setHeader('Termination', termination)
+  return completed.pgn()
+}
+
 export function gameStatus(game: Chess): string {
   if (game.isCheckmate()) {
     return `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins`
@@ -71,4 +89,17 @@ export function formatEvaluation(score: number): string {
   const pawns = score / 100
   if (Math.abs(pawns) < 0.05) return '0.0'
   return `${pawns > 0 ? '+' : ''}${pawns.toFixed(1)}`
+}
+
+export function timeoutResult(loser: Color, opponentHasMatingMaterial: boolean): string {
+  if (!opponentHasMatingMaterial) return '1/2-1/2'
+  return loser === 'w' ? '0-1' : '1-0'
+}
+
+export function hasMatingMaterial(game: Chess, color: Color): boolean {
+  const pieces = game.board().flat().filter((piece) => piece?.color === color && piece.type !== 'k')
+  if (pieces.some((piece) => piece && ['p', 'r', 'q'].includes(piece.type))) return true
+  const bishops = pieces.filter((piece) => piece?.type === 'b').length
+  const knights = pieces.filter((piece) => piece?.type === 'n').length
+  return bishops >= 2 || (bishops >= 1 && knights >= 1) || knights >= 3
 }

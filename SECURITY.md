@@ -1,6 +1,6 @@
 # Security policy
 
-KnightLab is local-first and must not enable telemetry or network access by default.
+KnightClub is local-first and must not enable telemetry or network access by default.
 
 Report vulnerabilities privately to the repository owner rather than publishing exploit details in a public issue.
 

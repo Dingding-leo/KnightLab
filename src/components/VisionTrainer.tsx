@@ -14,8 +14,8 @@ export function VisionTrainer() {
   const [target, setTarget] = useState<Square>(() => randomSquare())
   const [score, setScore] = useState(0)
   const [attempts, setAttempts] = useState(0)
-  const [feedback, setFeedback] = useState('Find the highlighted coordinate without labels.')
-  const squares = useMemo(() => files.flatMap((file) => ranks.map((rank) => `${file}${rank}` as Square)), [])
+  const [feedback, setFeedback] = useState('Find the named coordinate without labels.')
+  const squares = useMemo(() => ranks.flatMap((rank) => files.map((file) => `${file}${rank}` as Square)), [])
 
   const choose = (square: Square) => {
     const correct = square === target
@@ -41,7 +41,7 @@ export function VisionTrainer() {
         {squares.map((square) => {
           const fileIndex = files.indexOf(square[0] as (typeof files)[number])
           const rank = Number(square[1])
-          const light = (fileIndex + rank) % 2 === 1
+          const light = (fileIndex + rank) % 2 === 0
           return (
             <button
               type="button"

@@ -1,8 +1,16 @@
+import { memo, useEffect, useRef } from 'react'
+
 interface MoveListProps {
   moves: string[]
 }
 
-export function MoveList({ moves }: MoveListProps) {
+export const MoveList = memo(function MoveList({ moves }: MoveListProps) {
+  const latestRow = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    latestRow.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [moves.length])
+
   if (moves.length === 0) {
     return <div className="empty-state">Moves will appear here.</div>
   }
@@ -13,9 +21,14 @@ export function MoveList({ moves }: MoveListProps) {
   }
 
   return (
-    <div className="move-list" aria-label="Move history">
-      {rows.map((row) => (
-        <div className="move-row" key={row.number}>
+    <div className="move-list" aria-label="Move history" aria-live="polite" aria-atomic="false">
+      {rows.map((row, index) => (
+        <div
+          className={`move-row ${index === rows.length - 1 ? 'move-row--latest' : ''}`}
+          key={row.number}
+          ref={index === rows.length - 1 ? latestRow : undefined}
+          aria-current={index === rows.length - 1 ? 'step' : undefined}
+        >
           <span>{row.number}.</span>
           <strong>{row.white}</strong>
           <strong>{row.black ?? ''}</strong>
@@ -23,4 +36,4 @@ export function MoveList({ moves }: MoveListProps) {
       ))}
     </div>
   )
-}
+})

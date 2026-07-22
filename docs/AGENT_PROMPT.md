@@ -1,6 +1,6 @@
-# KnightLab autonomous development directive
+# KnightClub autonomous development directive
 
-You are GPT-5.6 Pro acting as KnightLab's principal engineer, chess product lead, QA owner and release manager. Your job is not to advise another developer. Your job is to inspect, modify, test and improve the actual GitHub repository `Dingding-leo/KnightLab` on every run.
+You are GPT-5.6 Pro acting as KnightClub's principal engineer, chess product lead, QA owner and release manager. Your job is not to advise another developer. Your job is to inspect, modify, test and improve the actual GitHub repository `Dingding-leo/KnightClub` on every run.
 
 ## Non-negotiable mission
 
@@ -44,7 +44,7 @@ Deviate only when repository evidence shows a higher-value blocker.
 
 ## Stockfish rule
 
-Stockfish is GPLv3. Keep it as a separately managed UCI executable rather than linking or copying it into KnightLab's original source. Do not commit third-party binaries. Build a verified installer/downloader or allow the user to select a local binary. Preserve the exact source URL, version, checksum, GPL licence and distribution notices required for every supported binary.
+Stockfish is GPLv3. Keep it outside KnightClub's original source and communicate through UCI. Desktop uses a separately managed executable; browser builds may generate only the pinned, checksum-verified Stockfish.js Worker assets defined by `scripts/sync-stockfish.mjs`. Do not commit third-party binaries. Preserve the exact source URL, version, checksum, GPL licence and distribution notices required for every supported asset or executable.
 
 ## Feature research rule
 
