@@ -1812,6 +1812,8 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
   .board-stage { width: 100%; }
   .board-status { min-height: 32px; }
   .board-status__summary { gap: 7px; }
+  .analysis-navigation { grid-template-columns: 44px 44px 1fr 44px 44px; }
+  .analysis-navigation button { min-width: 44px; min-height: 44px; }
   .play-preview-navigation__step,
   .play-preview-navigation__review,
   .play-preview-navigation .board-return-live { min-height: 44px; }
@@ -1869,7 +1871,7 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
   .review-stats { grid-template-columns: 1fr; }
   .review-practice-callout { align-items: stretch; flex-direction: column; }
   .review-practice-callout button { width: 100%; }
-  .analysis-navigation { grid-template-columns: 38px 38px 1fr 38px 38px; }
+  .analysis-navigation { grid-template-columns: 44px 44px 1fr 44px 44px; }
   .tactics-sprint { padding: 16px 12px; }
   .tactics-sprint__heading output { min-width: 42px; justify-content: center; padding: 0 7px; }
   .tactics-sprint__promotion { grid-template-columns: 1fr; justify-items: stretch; }

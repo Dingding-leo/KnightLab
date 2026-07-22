@@ -40,6 +40,8 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 
 **Latest Play-to-Review handoff evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 51 files / 252 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. The one-shot preview target requires an integer historical ply and exact expected FEN. Contracts prove a matching prefix remains valid after a bot appends a reply, while a changed FEN, zero ply or out-of-range ply falls back to normal Review. The Review component initializes to the verified target before its ordinary analysis effect runs, and the Play preview group exposes **Review this position**. This is deterministic/markup evidence; a manual Play-to-Review walkthrough remains release handoff work.
 
+**Latest phone Review replay-control evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 51 files / 252 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. The Review markup contract retains labelled first/previous/next/last controls. At the phone breakpoint, CSS reserves four 44 px arrow columns around the position output instead of reducing them at 430 px. This is deterministic/markup evidence; a manual narrow-window replay walkthrough remains release handoff work.
+
 ## Workspace-navigation user check
 
 1. In **Play**, scroll the page to a measurable non-zero position (for example, 550 px), then select **Review**. Confirm the page starts at the top and the current workspace heading receives focus without being scrolled away.
@@ -177,6 +179,7 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 2. Choose **Start position**, a White SAN move and a Black SAN move. Each selection must update the board, move count and selected position immediately, without needing to scroll to the full analysis panel first.
 3. Scroll to the panel and confirm the complete classified notation list, current-row treatment, turning-point controls and review feedback are still present and stay synchronized with the picker.
 4. Repeat in the packaged desktop app narrowed to a phone-sized window before treating this layout as manually verified.
+5. At 320, 375 and 430 px widths, repeatedly use first/previous/next/last beside the board. Confirm all four targets are 44 px, disabled endpoints remain clear, the position counter has room to update and no horizontal overflow appears.
 
 ## Play notation-preview check
 
