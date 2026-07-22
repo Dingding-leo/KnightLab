@@ -1703,6 +1703,9 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
 .library-aborted-toggle { margin: 0 0 10px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .library-aborted-toggle:hover { color: var(--text); }
 .library-list { display: grid; gap: 8px; }
+.library-pagination { margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.library-pagination p { margin: 0; color: var(--muted); font-size: 11px; }
+.library-pagination .secondary-button { min-height: 44px; }
 .library-game { min-height: 76px; padding: 11px 13px; border: 1px solid rgba(255, 255, 255, .065); border-radius: 11px; background: rgba(255, 255, 255, .025); display: grid; grid-template-columns: 74px minmax(0, 1fr) auto auto; align-items: center; gap: 13px; }
 .library-game:hover { border-color: rgba(163, 214, 92, .22); background: rgba(163, 214, 92, .05); }
 .library-game > strong { color: var(--accent); font-size: 16px; letter-spacing: -.03em; }
@@ -1861,6 +1864,8 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
   .library-tools { align-items: stretch; flex-direction: column; }
   .library-filters { width: 100%; }
   .library-filters button { flex: 1; }
+  .library-pagination { align-items: stretch; flex-direction: column; }
+  .library-pagination .secondary-button { width: 100%; }
   .library-game { grid-template-columns: 58px minmax(0, 1fr); gap: 8px 10px; }
   .library-game__state { min-width: 0; text-align: left; }
   .library-game__actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }

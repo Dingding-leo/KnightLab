@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Chess } from 'chess.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import App, { PromotionDialog } from './App'
+import App, { LibraryResults, PromotionDialog } from './App'
 import { cloneGameAtPly } from './domain/chess'
 import { positionTransferFor } from './domain/positionTransfer'
+import type { StoredGame } from './storage/gameStore'
 
 const SESSION_KEY = 'knightclub.active-session.v1'
 
@@ -19,6 +20,37 @@ function renderApp(session?: Record<string, unknown>): string {
 }
 
 afterEach(() => vi.unstubAllGlobals())
+
+function libraryGame(index: number): StoredGame {
+  return {
+    id: `game-${index}`,
+    playedAt: `2026-07-23T00:${String(index % 60).padStart(2, '0')}:00.000Z`,
+    mode: 'local',
+    result: index % 2 ? '1-0' : '0-1',
+    pgn: '1. e4 e5',
+    finalFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    moveCount: 2,
+    reviewed: index % 3 === 0,
+  }
+}
+
+describe('progressive library rendering', () => {
+  it('mounts only the current page of a large filtered result set', () => {
+    const markup = renderToStaticMarkup(
+      <LibraryResults
+        games={Array.from({ length: 500 }, (_, index) => libraryGame(index + 1))}
+        revealCount={24}
+        onRevealMore={() => {}}
+        onReview={() => {}}
+        onOpen={() => {}}
+      />,
+    )
+
+    expect(markup.match(/class="library-game"/g)).toHaveLength(24)
+    expect(markup).toContain('Showing 24 of 500 saved games')
+    expect(markup).toContain('Show 24 more games')
+  })
+})
 
 describe('bot player-side setup', () => {
   it('presents accessible White, Black and Random choices for a fresh game', () => {

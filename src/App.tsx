@@ -109,6 +109,11 @@ import {
 } from './domain/playPreview'
 import { handoffWorkspace } from './domain/workspaceNavigation'
 import { terminalSessionFingerprint } from './domain/libraryIdentity'
+import {
+  LIBRARY_PAGE_SIZE,
+  progressiveLibraryResults,
+  revealMoreLibraryResults,
+} from './domain/libraryPagination'
 import { HybridEngineClient, isTauriRuntime, type EngineSearchResult } from './engine/stockfishClient'
 import { engineSettingsLabel, normalizeEngineSettings } from './engine/engineSettings'
 import { playEngineFailureStatus, playEngineStatusUpdate } from './engine/playEngineStatus'
@@ -429,6 +434,57 @@ function profileForStoredGame(item: StoredGame) {
     : profileForLegacyLevel(item.botLevel)
 }
 
+function searchableLibraryText(item: StoredGame): string {
+  const storedProfile = item.mode === 'bot' ? profileForStoredGame(item) : null
+  return [
+    item.result,
+    item.mode === 'bot'
+      ? `computer stockfish knightbot ${storedProfile?.name ?? ''} ${storedProfile?.openingCueLabel ?? ''} ${item.botLevel ?? ''} ${item.humanColor === 'b' ? 'black' : 'white'}`
+      : 'hot-seat',
+    item.timeControl?.label ?? '',
+    new Date(item.playedAt).toLocaleString(),
+  ].join(' ').toLowerCase()
+}
+
+interface LibraryResultsProps {
+  games: readonly StoredGame[]
+  revealCount: number
+  onRevealMore: () => void
+  onReview: (item: StoredGame) => void
+  onOpen: (item: StoredGame) => void
+}
+
+/** Renders only a progressive page after the complete library has been filtered. */
+export function LibraryResults({ games, revealCount, onRevealMore, onReview, onOpen }: LibraryResultsProps) {
+  const page = progressiveLibraryResults(games, revealCount)
+  const nextBatch = Math.min(LIBRARY_PAGE_SIZE, page.remainingCount)
+
+  return (
+    <>
+      <div className="library-list">
+        {page.items.map((item) => (
+          <article key={item.id} className="library-game">
+            <strong>{item.result}</strong>
+            <div className="library-game__details">
+              <span>{item.mode === 'bot' ? `Computer · ${profileForStoredGame(item).name} · You: ${item.humanColor === 'b' ? 'Black' : 'White'}` : 'Hot-seat'}</span>
+              <small>{item.timeControl?.label ?? 'Unlimited'} · {new Date(item.playedAt).toLocaleString()} · {item.moveCount} ply</small>
+            </div>
+            <div className="library-game__state">{item.reviewed ? <em>Reviewed</em> : <span>Ready to review</span>}</div>
+            <div className="library-game__actions">
+              <button className="primary-button" type="button" onClick={() => onReview(item)}><Search size={15} />{item.reviewed ? 'Resume review' : 'Review'}</button>
+              <button className="secondary-button" type="button" onClick={() => onOpen(item)}><Play size={15} />Open board</button>
+            </div>
+          </article>
+        ))}
+      </div>
+      <div className="library-pagination">
+        <p aria-live="polite">Showing {page.shownCount} of {page.totalCount} saved games</p>
+        {nextBatch > 0 && <button className="secondary-button" type="button" onClick={onRevealMore}>Show {nextBatch} more game{nextBatch === 1 ? '' : 's'}</button>}
+      </div>
+    </>
+  )
+}
+
 export default function App() {
   const initialPreferences = useMemo(loadPreferences, [])
   const initial = useMemo(
@@ -479,6 +535,7 @@ export default function App() {
   const [libraryQuery, setLibraryQuery] = useState('')
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'reviewed' | 'unreviewed'>('all')
   const [showAbortedGames, setShowAbortedGames] = useState(false)
+  const [libraryRevealCount, setLibraryRevealCount] = useState(LIBRARY_PAGE_SIZE)
   const [retryItems, setRetryItems] = useState<RetryItem[]>(() => loadBrowserRetryItems())
   const [tacticsState, setTacticsState] = useState<TacticsState>(() => loadBrowserTacticsState())
   const [requestedRetryKey, setRequestedRetryKey] = useState<string | null>(null)
@@ -503,6 +560,7 @@ export default function App() {
   const tacticsWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const libraryRequestVersion = useRef(0)
   const pendingNativeGameSaves = useRef<StoredGame[]>([])
+  const librarySearchTextCache = useRef(new WeakMap<StoredGame, string>())
   const soundsEnabledRef = useRef(soundsEnabled)
   const captureClockNow = useCallback((nowMs: number) => {
     clockNowRef.current = nowMs
@@ -900,6 +958,7 @@ export default function App() {
     libraryRequestVersion.current += 1
     clearLibrary()
     setLibrary([])
+    setLibraryRevealCount(LIBRARY_PAGE_SIZE)
     setLibraryLoadState('ready')
     if (database && databaseReady) void database.clearGames().catch(reportDatabaseError)
   }
@@ -1782,18 +1841,30 @@ export default function App() {
       if (libraryFilter === 'reviewed' && !item.reviewed) return false
       if (libraryFilter === 'unreviewed' && item.reviewed) return false
       if (!query) return true
-      const storedProfile = item.mode === 'bot' ? profileForStoredGame(item) : null
-      const searchable = [
-        item.result,
-        item.mode === 'bot'
-          ? `computer stockfish knightbot ${storedProfile?.name ?? ''} ${storedProfile?.openingCueLabel ?? ''} ${item.botLevel ?? ''} ${item.humanColor === 'b' ? 'black' : 'white'}`
-          : 'hot-seat',
-        item.timeControl?.label ?? '',
-        new Date(item.playedAt).toLocaleString(),
-      ].join(' ').toLowerCase()
+      let searchable = librarySearchTextCache.current.get(item)
+      if (!searchable) {
+        searchable = searchableLibraryText(item)
+        librarySearchTextCache.current.set(item, searchable)
+      }
       return searchable.includes(query)
     })
   }, [library, libraryFilter, libraryQuery, showAbortedGames])
+  const revealMoreLibrary = useCallback(() => {
+    setLibraryRevealCount((current) => revealMoreLibraryResults(current, visibleLibrary.length))
+  }, [visibleLibrary.length])
+  const updateLibraryQuery = useCallback((query: string) => {
+    setLibraryQuery(query)
+    setLibraryRevealCount(LIBRARY_PAGE_SIZE)
+  }, [])
+  const updateLibraryFilter = useCallback((filter: 'all' | 'reviewed' | 'unreviewed') => {
+    if (filter === libraryFilter) return
+    setLibraryFilter(filter)
+    setLibraryRevealCount(LIBRARY_PAGE_SIZE)
+  }, [libraryFilter])
+  const toggleAbortedGames = useCallback(() => {
+    setShowAbortedGames((value) => !value)
+    setLibraryRevealCount(LIBRARY_PAGE_SIZE)
+  }, [])
 
   const topPlayer = playerFor(topColor)
   const bottomPlayer = playerFor(bottomColor)
@@ -2165,30 +2236,17 @@ export default function App() {
               </div>
             ) : library.length ? <>
               <div className="library-tools" role="search">
-                <label className="library-search" htmlFor="library-search"><Search size={16} /><span className="sr-only">Search saved games</span><input id="library-search" value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Search opponent, result or time…" /></label>
+                <label className="library-search" htmlFor="library-search"><Search size={16} /><span className="sr-only">Search saved games</span><input id="library-search" value={libraryQuery} onChange={(event) => updateLibraryQuery(event.target.value)} placeholder="Search opponent, result or time…" /></label>
                 <div className="library-filters" aria-label="Review filter">
-                  <button type="button" className={libraryFilter === 'all' ? 'is-active' : ''} aria-pressed={libraryFilter === 'all'} onClick={() => setLibraryFilter('all')}>All</button>
-                  <button type="button" className={libraryFilter === 'unreviewed' ? 'is-active' : ''} aria-pressed={libraryFilter === 'unreviewed'} onClick={() => setLibraryFilter('unreviewed')}>Needs review</button>
-                  <button type="button" className={libraryFilter === 'reviewed' ? 'is-active' : ''} aria-pressed={libraryFilter === 'reviewed'} onClick={() => setLibraryFilter('reviewed')}>Reviewed</button>
+                  <button type="button" className={libraryFilter === 'all' ? 'is-active' : ''} aria-pressed={libraryFilter === 'all'} onClick={() => updateLibraryFilter('all')}>All</button>
+                  <button type="button" className={libraryFilter === 'unreviewed' ? 'is-active' : ''} aria-pressed={libraryFilter === 'unreviewed'} onClick={() => updateLibraryFilter('unreviewed')}>Needs review</button>
+                  <button type="button" className={libraryFilter === 'reviewed' ? 'is-active' : ''} aria-pressed={libraryFilter === 'reviewed'} onClick={() => updateLibraryFilter('reviewed')}>Reviewed</button>
                 </div>
               </div>
-              {abortedGameCount > 0 && <button className="library-aborted-toggle" type="button" onClick={() => setShowAbortedGames((value) => !value)}>
+              {abortedGameCount > 0 && <button className="library-aborted-toggle" type="button" onClick={toggleAbortedGames}>
                 {showAbortedGames ? `Hide ${abortedGameCount} aborted game${abortedGameCount === 1 ? '' : 's'}` : `Show ${abortedGameCount} aborted game${abortedGameCount === 1 ? '' : 's'}`}
               </button>}
-              {visibleLibrary.length ? <div className="library-list">{visibleLibrary.map((item) => (
-                <article key={item.id} className="library-game">
-                  <strong>{item.result}</strong>
-                  <div className="library-game__details">
-                    <span>{item.mode === 'bot' ? `Computer · ${profileForStoredGame(item).name} · You: ${item.humanColor === 'b' ? 'Black' : 'White'}` : 'Hot-seat'}</span>
-                    <small>{item.timeControl?.label ?? 'Unlimited'} · {new Date(item.playedAt).toLocaleString()} · {item.moveCount} ply</small>
-                  </div>
-                  <div className="library-game__state">{item.reviewed ? <em>Reviewed</em> : <span>Ready to review</span>}</div>
-                  <div className="library-game__actions">
-                    <button className="primary-button" type="button" onClick={() => openStored(item, 'review')}><Search size={15} />{item.reviewed ? 'Resume review' : 'Review'}</button>
-                    <button className="secondary-button" type="button" onClick={() => openStored(item)}><Play size={15} />Open board</button>
-                  </div>
-                </article>
-              ))}</div> : <div className="empty-panel"><Library size={30} /><strong>No games match those filters</strong><span>Try clearing search or showing a different review status.</span></div>}
+              {visibleLibrary.length ? <LibraryResults games={visibleLibrary} revealCount={libraryRevealCount} onRevealMore={revealMoreLibrary} onReview={(item) => openStored(item, 'review')} onOpen={openStored} /> : <div className="empty-panel"><Library size={30} /><strong>No games match those filters</strong><span>Try clearing search or showing a different review status.</span></div>}
             </> : <div className="empty-panel"><Library size={30} /><strong>Your library is ready</strong><span>Finish a game and it will appear here automatically.</span></div>}
           </section>
         )}
