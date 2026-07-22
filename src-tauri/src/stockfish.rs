@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
@@ -56,6 +56,46 @@ fn is_play_request_cancelled(request_id: u64, cancelled_through: &AtomicU64) -> 
 
 fn record_play_cancellation(cancelled_through: &AtomicU64, request_id: u64) {
     cancelled_through.fetch_max(request_id, Ordering::AcqRel);
+}
+
+/**
+ * Analysis clients deliberately use independent request-ID ranges, so a
+ * single numeric watermark cannot safely represent their cancellations. Keep
+ * exact request IDs instead: a delayed old stop can add its own marker but
+ * cannot remove a newer request's marker. IDs are client-lifetime values, so
+ * retaining them is safer than dropping a pre-cancelled queued request.
+ */
+#[derive(Default)]
+struct AnalysisCancellationRegistry {
+    cancelled: HashSet<u64>,
+}
+
+impl AnalysisCancellationRegistry {
+    fn record(&mut self, request_id: u64) {
+        self.cancelled.insert(request_id);
+    }
+
+    fn is_cancelled(&self, request_id: u64) -> bool {
+        self.cancelled.contains(&request_id)
+    }
+}
+
+fn is_analysis_request_cancelled(
+    request_id: u64,
+    cancelled_requests: &Mutex<AnalysisCancellationRegistry>,
+) -> bool {
+    cancelled_requests
+        .lock()
+        .map_or(true, |registry| registry.is_cancelled(request_id))
+}
+
+fn record_analysis_cancellation(
+    request_id: u64,
+    cancelled_requests: &Mutex<AnalysisCancellationRegistry>,
+) {
+    if let Ok(mut registry) = cancelled_requests.lock() {
+        registry.record(request_id);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -886,45 +926,57 @@ impl EngineSupervisor {
         }
     }
 
-    pub fn analyze(
+    pub fn analyze<F>(
         &mut self,
         fen: &str,
         settings: &AnalysisSettings,
         timeout: Duration,
-        request_id: u64,
-        cancelled_through: &AtomicU64,
-    ) -> Result<AnalysisOutcome, EngineError> {
+        is_cancelled: F,
+    ) -> Result<AnalysisOutcome, EngineError>
+    where
+        F: Fn() -> bool,
+    {
         validate_fen(fen)?;
-        if cancelled_through.load(Ordering::Acquire) == request_id {
+        if is_cancelled() {
             return Err(EngineError::Cancelled);
         }
-        let result =
-            self.analyze_after_validation(fen, settings, timeout, request_id, cancelled_through);
+        let result = self.analyze_after_validation(fen, settings, timeout, &is_cancelled);
         if result.is_err() {
             self.configured_options = None;
         }
         result
     }
 
-    fn analyze_after_validation(
+    fn analyze_after_validation<F>(
         &mut self,
         fen: &str,
         settings: &AnalysisSettings,
         timeout: Duration,
-        request_id: u64,
-        cancelled_through: &AtomicU64,
-    ) -> Result<AnalysisOutcome, EngineError> {
+        is_cancelled: &F,
+    ) -> Result<AnalysisOutcome, EngineError>
+    where
+        F: Fn() -> bool,
+    {
         if self.identity.is_none() {
             self.initialize(timeout)?;
         }
+        if is_cancelled() {
+            return Err(EngineError::Cancelled);
+        }
         let deadline = Instant::now() + timeout;
         self.configure_options(analysis_option_commands(settings), deadline)?;
+        if is_cancelled() {
+            return Err(EngineError::Cancelled);
+        }
         self.send(&format!("position fen {fen}"))?;
+        if is_cancelled() {
+            return Err(EngineError::Cancelled);
+        }
         self.send(&analysis_go_command(settings))?;
         let started = Instant::now();
         let mut lines = BTreeMap::<u8, AnalysisInfo>::new();
         loop {
-            if cancelled_through.load(Ordering::Acquire) == request_id {
+            if is_cancelled() {
                 let _ = self.send("stop");
                 return Err(EngineError::Cancelled);
             }
@@ -1171,14 +1223,14 @@ impl Default for StockfishState {
 #[derive(Clone)]
 pub struct AnalysisState {
     engine: Arc<Mutex<Option<ManagedEngine>>>,
-    cancelled_through: Arc<AtomicU64>,
+    cancelled_requests: Arc<Mutex<AnalysisCancellationRegistry>>,
 }
 
 impl Default for AnalysisState {
     fn default() -> Self {
         Self {
             engine: Arc::new(Mutex::new(None)),
-            cancelled_through: Arc::new(AtomicU64::new(0)),
+            cancelled_requests: Arc::new(Mutex::new(AnalysisCancellationRegistry::default())),
         }
     }
 }
@@ -1282,7 +1334,7 @@ fn stockfish_analyze_blocking(
     state: &AnalysisState,
     request: AnalysisRequest,
 ) -> Result<AnalysisResponse, String> {
-    if request.request_id == state.cancelled_through.load(Ordering::Acquire) {
+    if is_analysis_request_cancelled(request.request_id, state.cancelled_requests.as_ref()) {
         return Err(EngineError::Cancelled.to_string());
     }
     let path = discover_for_app(request.engine_path).map_err(|error| error.to_string())?;
@@ -1292,7 +1344,7 @@ fn stockfish_analyze_blocking(
         .engine
         .lock()
         .map_err(|_| "Stockfish analysis lock was poisoned".to_owned())?;
-    if request.request_id == state.cancelled_through.load(Ordering::Acquire) {
+    if is_analysis_request_cancelled(request.request_id, state.cancelled_requests.as_ref()) {
         return Err(EngineError::Cancelled.to_string());
     }
     if guard.as_ref().map(|engine| engine.path.as_path()) != Some(path.as_path()) {
@@ -1315,13 +1367,13 @@ fn stockfish_analyze_blocking(
     };
     let managed = guard.as_mut().expect("managed analysis engine initialized");
     let timeout = Duration::from_millis(settings.move_time_ms.saturating_add(3_000));
-    let outcome = match managed.supervisor.analyze(
-        &request.fen,
-        &settings,
-        timeout,
-        request.request_id,
-        &state.cancelled_through,
-    ) {
+    let request_id = request.request_id;
+    let cancelled_requests = state.cancelled_requests.clone();
+    let outcome = match managed
+        .supervisor
+        .analyze(&request.fen, &settings, timeout, move || {
+            is_analysis_request_cancelled(request_id, cancelled_requests.as_ref())
+        }) {
         Ok(outcome) => outcome,
         Err(error) => {
             *guard = None;
@@ -1341,7 +1393,7 @@ fn stockfish_analyze_blocking(
 
 #[tauri::command]
 pub fn stockfish_analysis_stop(state: State<'_, AnalysisState>, request_id: u64) {
-    state.cancelled_through.store(request_id, Ordering::Release);
+    record_analysis_cancellation(request_id, state.cancelled_requests.as_ref());
 }
 
 #[cfg(test)]
@@ -1358,5 +1410,45 @@ mod tests {
         assert!(is_play_request_cancelled(41, &cancelled_through));
         assert!(is_play_request_cancelled(42, &cancelled_through));
         assert!(!is_play_request_cancelled(43, &cancelled_through));
+    }
+
+    #[test]
+    fn keeps_newer_analysis_cancellation_when_an_older_stop_arrives_late() {
+        let cancelled_requests = Mutex::new(AnalysisCancellationRegistry::default());
+
+        // IDs intentionally do not imply creation order: separate analysis
+        // clients allocate independent ranges. The late old stop is larger.
+        record_analysis_cancellation(10, &cancelled_requests);
+        record_analysis_cancellation(1_000_000, &cancelled_requests);
+
+        assert!(is_analysis_request_cancelled(10, &cancelled_requests));
+        assert!(is_analysis_request_cancelled(
+            1_000_000,
+            &cancelled_requests
+        ));
+        assert!(!is_analysis_request_cancelled(99, &cancelled_requests));
+
+        let state = AnalysisState {
+            engine: Arc::new(Mutex::new(None)),
+            cancelled_requests: Arc::new(cancelled_requests),
+        };
+        let error = stockfish_analyze_blocking(
+            &state,
+            AnalysisRequest {
+                request_id: 10,
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".into(),
+                engine_path: Some(PathBuf::from("/not-used-for-a-cancelled-request")),
+                settings: AnalysisSettingsRequest {
+                    move_time_ms: 250,
+                    depth: Some(12),
+                    nodes: None,
+                    multi_pv: 1,
+                    threads: 1,
+                    hash_mb: 16,
+                },
+            },
+        )
+        .expect_err("the newer cancellation remains authoritative");
+        assert_eq!(error, EngineError::Cancelled.to_string());
     }
 }

@@ -93,13 +93,7 @@ fn real_stockfish_returns_three_complete_analysis_lines() {
     .expect("analysis settings");
     let mut engine = EngineSupervisor::new(path);
     let outcome = engine
-        .analyze(
-            START_FEN,
-            &settings,
-            Duration::from_secs(5),
-            41,
-            &AtomicU64::new(0),
-        )
+        .analyze(START_FEN, &settings, Duration::from_secs(5), || false)
         .expect("real Stockfish MultiPV analysis");
 
     assert_eq!(outcome.lines.len(), 3);

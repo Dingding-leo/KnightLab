@@ -7,7 +7,7 @@ use knightclub_lib::stockfish::{
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -131,8 +131,7 @@ done
             })
             .unwrap(),
             Duration::from_secs(3),
-            41,
-            &AtomicU64::new(0),
+            || false,
         )
         .expect("analysis result");
 
@@ -160,7 +159,7 @@ done
 "#,
     );
     let mut engine = EngineSupervisor::new(engine_path(directory.path()));
-    let cancelled = AtomicU64::new(0);
+    let cancelled = AtomicBool::new(false);
     let settings = resolve_analysis_settings(request()).expect("settings");
     let mut go_only_change = settings.clone();
     go_only_change.move_time_ms = 500;
@@ -168,25 +167,19 @@ done
     option_change.multi_pv = 2;
 
     engine
-        .analyze(START_FEN, &settings, Duration::from_secs(3), 1, &cancelled)
+        .analyze(START_FEN, &settings, Duration::from_secs(3), || {
+            cancelled.load(Ordering::Acquire)
+        })
         .expect("first analysis");
     engine
-        .analyze(
-            START_FEN,
-            &go_only_change,
-            Duration::from_secs(3),
-            2,
-            &cancelled,
-        )
+        .analyze(START_FEN, &go_only_change, Duration::from_secs(3), || {
+            cancelled.load(Ordering::Acquire)
+        })
         .expect("go-only change analysis");
     engine
-        .analyze(
-            START_FEN,
-            &option_change,
-            Duration::from_secs(3),
-            3,
-            &cancelled,
-        )
+        .analyze(START_FEN, &option_change, Duration::from_secs(3), || {
+            cancelled.load(Ordering::Acquire)
+        })
         .expect("option change analysis");
 
     let commands = fs::read_to_string(command_log).expect("read command log");
@@ -230,9 +223,10 @@ done
 
 #[test]
 fn cancels_an_analysis_request_without_waiting_for_timeout() {
-    let directory = fake_engine(
+    let (directory, command_log) = fake_engine_with_command_log(
         r#"
 while IFS= read -r line; do
+  echo "$line" >> "$COMMAND_LOG"
   case "$line" in
     uci) echo "id name Cancellation Fixture"; echo "uciok" ;;
     isready) echo "readyok" ;;
@@ -244,15 +238,19 @@ done
     );
     let mut engine = EngineSupervisor::new(engine_path(directory.path()));
     engine.initialize(Duration::from_secs(3)).unwrap();
-    let cancelled = AtomicU64::new(77);
+    let cancelled = AtomicBool::new(true);
     let error = engine
         .analyze(
             START_FEN,
             &resolve_analysis_settings(request()).unwrap(),
             Duration::from_secs(3),
-            77,
-            &cancelled,
+            || cancelled.load(Ordering::Acquire),
         )
         .expect_err("cancelled analysis");
     assert!(matches!(error, EngineError::Cancelled));
+    let commands = fs::read_to_string(command_log).expect("read command log");
+    assert!(
+        !commands.lines().any(|line| line.starts_with("go ")),
+        "a pre-cancelled analysis must not start a Stockfish search",
+    );
 }
