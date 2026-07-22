@@ -801,6 +801,20 @@ export function AnalysisWorkspace({
           <button type="button" aria-label="Last position" disabled={ply === maxPly} onClick={() => setPly(maxPly)}><ChevronLast size={20} /></button>
         </div>
 
+        {timeline.moves.length > 0 && (
+          <label className="analysis-mobile-move-picker">
+            <span>Jump to move</span>
+            <select aria-label="Jump to a game position" value={ply} onChange={(event) => setPly(Number(event.target.value))}>
+              <option value={0}>Start position</option>
+              {timeline.moves.map((move) => (
+                <option key={move.ply} value={move.ply}>
+                  {move.moveNumber}{move.color === 'b' ? '…' : '.'} {move.san}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         <section className="analysis-transfer" aria-label="Copy or download current analysis">
           <div>
             <strong>Share</strong>

@@ -1203,6 +1203,7 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
 .analysis-navigation button:hover:not(:disabled) { color: var(--text); background: var(--surface-raised); }
 .analysis-navigation button:disabled { color: #586056; cursor: not-allowed; }
 .analysis-navigation output { color: var(--muted); font-size: 10px; font-weight: 750; text-align: center; }
+.analysis-mobile-move-picker { display: none; }
 
 .analysis-import {
   margin-top: 10px;
@@ -1769,6 +1770,9 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
   .analysis-workspace { display: block; }
   .analysis-panel { margin-top: 16px; min-height: 590px; border-radius: 14px; }
   .analysis-board-heading { min-height: 38px; }
+  .analysis-mobile-move-picker { margin-top: 10px; display: grid; gap: 5px; }
+  .analysis-mobile-move-picker > span { color: var(--muted); font-size: 10px; font-weight: 750; }
+  .analysis-mobile-move-picker select { min-height: 44px; }
   .retry-queue { grid-template-columns: 1fr; grid-template-areas: "heading" "items" "board" "panel" "promotion"; }
   .retry-queue__board { width: min(100%, 620px); }
   .train-source-tabs { grid-template-columns: 1fr; gap: 3px; }

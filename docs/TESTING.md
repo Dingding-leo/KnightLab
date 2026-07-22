@@ -34,6 +34,8 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 
 **Latest interaction-smoothness evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 50 files / 247 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests; production web and macOS Tauri builds passed; and the local Vite endpoint returned HTTP 200. Premove tests prove conditional queueable targets, including promotion shape previews, while the board contract labels those markers as conditional and keeps final legality with `chess.js`. Review persistence tests prove a deferred save reports success or a recoverable failure without changing an already completed report; stale/new-run or unmounted UI completions stay silent while a successful durable write still updates linked Library/Insights metadata. The narrow toolbar retains its labelled DOM/Tab order through explicit game/transfer groups and expands controls to 44 px below 430 px. Prefix replay retains a custom FEN and does not mutate the live game, while clickable notation contracts identify the currently previewed ply and stop auto-following when the player is inspecting history. Position tools derive their copied/downloaded FEN from that displayed board and state when the live clock continues. Review-to-Train contracts retain serial partial-save behavior while exposing a polite preparation notice and action-specific label. The fixed 100 × 100 accessible SVG frame remains covered while pawn/queen art receives only internal optical scaling. A manual browser/packaged-desktop interaction walkthrough remains release handoff work.
 
+**Latest mobile Review-navigation evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 50 files / 247 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests. The Review markup contract proves the labelled **Jump to move** control offers Start plus SAN positions and follows board navigation in source order, before transfer controls, while the complete labelled move list remains in the analysis panel. This is deterministic/markup evidence; a manual narrow browser and packaged-desktop walkthrough remains release handoff work.
+
 ## Workspace-navigation user check
 
 1. In **Play**, scroll the page to a measurable non-zero position (for example, 550 px), then select **Review**. Confirm the page starts at the top and the current workspace heading receives focus without being scrolled away.
@@ -164,6 +166,13 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 1. At 320, 375 and 430 px viewport widths, open Play and confirm **Undo**, **New game** and **Pause/Resume** form the first row; **Copy PGN** and **Download PGN** form the second.
 2. Confirm labels stay fully readable, every control is at least 44 px tall, no horizontal page overflow appears, and Tab order remains Undo → New game → Pause/Resume → Copy PGN → Download PGN.
 3. Trigger Copy and Download and confirm their existing nearby success/error status remains visible. Repeat in the packaged desktop app narrowed to a phone-sized window before treating this layout as manually verified.
+
+## Phone Review move-navigation check
+
+1. At 320, 375 and 430 px viewport widths, open a Review PGN with several moves. Confirm **Jump to move** is directly below the board’s first/previous/next/last controls and above share/import controls, without horizontal page overflow.
+2. Choose **Start position**, a White SAN move and a Black SAN move. Each selection must update the board, move count and selected position immediately, without needing to scroll to the full analysis panel first.
+3. Scroll to the panel and confirm the complete classified notation list, current-row treatment, turning-point controls and review feedback are still present and stay synchronized with the picker.
+4. Repeat in the packaged desktop app narrowed to a phone-sized window before treating this layout as manually verified.
 
 ## Play notation-preview check
 
