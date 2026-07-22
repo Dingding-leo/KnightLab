@@ -22,7 +22,7 @@
 - [x] User-selectable Stockfish executable with automatic/explicit UCI verification
 - [x] Pinned Stockfish 18 Lite WebAssembly for offline website play, analysis and full-game review
 - [ ] Optional verified Stockfish downloader
-- [x] Robust UCI bridge with cancellation, timeouts, restart, stale-result rejection and pre-setup queued-request cancellation
+- [x] Robust UCI bridge with cancellation, monotonic native Play stop watermark, timeouts, restart, stale-result rejection and pre-setup queued-request cancellation
 - [x] Progressive, responsive Play setup with draft-local custom time controls
 - [x] Configurable threads, Hash, MultiPV, depth, nodes and move time for bot play
 - [x] First three strength presets using UCI Elo, skill, time, threads and hash controls

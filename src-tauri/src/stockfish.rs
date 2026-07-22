@@ -46,6 +46,18 @@ impl From<std::io::Error> for EngineError {
     }
 }
 
+// Play requests come from one monotonically increasing frontend client. A
+// delayed stop for an older request must never revive a newer cancelled search.
+// Analysis intentionally keeps exact-ID cancellation because its callers use
+// independent, non-monotonic request sequences.
+fn is_play_request_cancelled(request_id: u64, cancelled_through: &AtomicU64) -> bool {
+    request_id <= cancelled_through.load(Ordering::Acquire)
+}
+
+fn record_play_cancellation(cancelled_through: &AtomicU64, request_id: u64) {
+    cancelled_through.fetch_max(request_id, Ordering::AcqRel);
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedBestMove {
     pub best_move: Option<String>,
@@ -781,7 +793,7 @@ impl EngineSupervisor {
         cancelled_through: &AtomicU64,
     ) -> Result<SearchOutcome, EngineError> {
         validate_fen(fen)?;
-        if cancelled_through.load(Ordering::Acquire) == request_id {
+        if is_play_request_cancelled(request_id, cancelled_through) {
             return Err(EngineError::Cancelled);
         }
         let result =
@@ -817,7 +829,7 @@ impl EngineSupervisor {
         let mut nps = None;
         let mut lines = BTreeMap::<u8, AnalysisInfo>::new();
         loop {
-            if cancelled_through.load(Ordering::Acquire) == request_id {
+            if is_play_request_cancelled(request_id, cancelled_through) {
                 let _ = self.send("stop");
                 return Err(EngineError::Cancelled);
             }
@@ -1188,7 +1200,7 @@ fn stockfish_best_move_blocking(
     state: &StockfishState,
     request: BestMoveRequest,
 ) -> Result<BestMoveResponse, String> {
-    if request.request_id == state.cancelled_through.load(Ordering::Acquire) {
+    if is_play_request_cancelled(request.request_id, &state.cancelled_through) {
         return Err(EngineError::Cancelled.to_string());
     }
     let path = discover_for_app(request.engine_path).map_err(|error| error.to_string())?;
@@ -1200,7 +1212,7 @@ fn stockfish_best_move_blocking(
         .engine
         .lock()
         .map_err(|_| "Stockfish state lock was poisoned".to_owned())?;
-    if request.request_id == state.cancelled_through.load(Ordering::Acquire) {
+    if is_play_request_cancelled(request.request_id, &state.cancelled_through) {
         return Err(EngineError::Cancelled.to_string());
     }
     if guard.as_ref().map(|engine| engine.path.as_path()) != Some(path.as_path()) {
@@ -1252,7 +1264,7 @@ fn stockfish_best_move_blocking(
 
 #[tauri::command]
 pub fn stockfish_stop(state: State<'_, StockfishState>, request_id: u64) {
-    state.cancelled_through.store(request_id, Ordering::Release);
+    record_play_cancellation(&state.cancelled_through, request_id);
 }
 
 #[tauri::command]
@@ -1330,4 +1342,21 @@ fn stockfish_analyze_blocking(
 #[tauri::command]
 pub fn stockfish_analysis_stop(state: State<'_, AnalysisState>, request_id: u64) {
     state.cancelled_through.store(request_id, Ordering::Release);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_newest_play_cancellation_when_an_older_stop_arrives_late() {
+        let cancelled_through = AtomicU64::new(0);
+
+        record_play_cancellation(&cancelled_through, 42);
+        record_play_cancellation(&cancelled_through, 41);
+
+        assert!(is_play_request_cancelled(41, &cancelled_through));
+        assert!(is_play_request_cancelled(42, &cancelled_through));
+        assert!(!is_play_request_cancelled(43, &cancelled_through));
+    }
 }

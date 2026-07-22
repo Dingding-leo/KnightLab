@@ -228,7 +228,7 @@ done
 }
 
 #[test]
-fn skips_a_pre_cancelled_play_request_before_engine_setup() {
+fn skips_a_pre_cancelled_or_superseded_play_request_before_engine_setup() {
     let (directory, command_log) = fake_engine_with_command_log(
         r#"
 while IFS= read -r line; do
@@ -252,10 +252,10 @@ done
             START_FEN,
             &strength_preset("balanced").expect("preset"),
             Duration::from_millis(100),
-            17,
+            16,
             &cancelled,
         )
-        .expect_err("pre-cancelled request must not start setup");
+        .expect_err("superseded request must not start setup");
     assert!(matches!(error, EngineError::Cancelled));
 
     let commands = fs::read_to_string(command_log).expect("read command log");
