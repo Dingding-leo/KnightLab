@@ -167,6 +167,22 @@ describe('DatabaseClient', () => {
     await expect(malformedSession.snapshot()).rejects.toThrow('invalid database snapshot')
   })
 
+  it('preserves named opponents and rejects unknown profile payloads from native storage', async () => {
+    const withProfile = {
+      ...snapshot,
+      activeSession: { ...snapshot.activeSession!, botProfileId: 'rowan-pike' as const },
+      games: [{ ...snapshot.games[0], botProfileId: 'rowan-pike' as const }],
+    }
+    const valid = new DatabaseClient(vi.fn(async () => withProfile))
+    await expect(valid.snapshot()).resolves.toEqual(withProfile)
+
+    const malformed = new DatabaseClient(vi.fn(async () => ({
+      ...snapshot,
+      games: [{ ...snapshot.games[0], botProfileId: 'unknown' }],
+    })))
+    await expect(malformed.snapshot()).rejects.toThrow('invalid database snapshot')
+  })
+
   it('rejects oversized writes before invoking native code', async () => {
     const invoke = vi.fn(async () => undefined)
     const client = new DatabaseClient(invoke)

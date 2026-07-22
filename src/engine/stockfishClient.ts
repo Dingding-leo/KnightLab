@@ -26,7 +26,8 @@ export interface StockfishCommandResponse {
 export interface EngineSearchResult {
   move: MoveInput | null
   ponder: MoveInput | null
-  provider: 'stockfish' | 'knightbot'
+  /** `opening-cue` is authored and validated in Play before an engine search begins. */
+  provider: 'stockfish' | 'knightbot' | 'opening-cue'
   engineName: string
   enginePath?: string
   elapsedMs?: number

@@ -11,6 +11,12 @@ describe('local preferences', () => {
     expect(normalizePreferences(null)).toEqual(DEFAULT_PREFERENCES)
   })
 
+  it('persists a known opponent preference and safely falls back for unknown IDs', () => {
+    expect(normalizePreferences({ botProfileId: 'nia-cross' }).botProfileId).toBe('nia-cross')
+    expect(normalizePreferences({ botProfileId: 'unknown' }).botProfileId)
+      .toBe(DEFAULT_PREFERENCES.botProfileId)
+  })
+
   it('migrates old preferences and normalizes nested engine settings', () => {
     expect(normalizePreferences({ soundsEnabled: false }).engine).toEqual(DEFAULT_PREFERENCES.engine)
     expect(normalizePreferences({

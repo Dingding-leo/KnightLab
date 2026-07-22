@@ -29,6 +29,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import './App.css'
+import { BotProfilePicker } from './components/BotProfilePicker'
 import { ChessBoard } from './components/ChessBoard'
 import { createPgnTimeline } from './analysis/analysisModel'
 import { EngineSettingsPanel, type EngineStatus } from './components/EngineSettingsPanel'
@@ -97,8 +98,19 @@ import { gameShortcutFor } from './domain/shortcuts'
 import { copyText, downloadText } from './domain/textTransfer'
 import { handoffWorkspace } from './domain/workspaceNavigation'
 import { terminalSessionFingerprint } from './domain/libraryIdentity'
-import { HybridEngineClient, isTauriRuntime } from './engine/stockfishClient'
+import { HybridEngineClient, isTauriRuntime, type EngineSearchResult } from './engine/stockfishClient'
 import { engineSettingsLabel, normalizeEngineSettings } from './engine/engineSettings'
+import {
+  DEFAULT_BOT_PROFILE_ID,
+  botOpeningReaction,
+  botPostGameMessage,
+  botProfileForId,
+  isBotProfileId,
+  profileForLegacyLevel,
+  selectProfileOpeningMove,
+  type BotProfileId,
+  type BotProfileTone,
+} from './bots/profiles'
 import {
   clearActiveSession,
   clearLibrary,
@@ -253,13 +265,17 @@ const promotionNames: Partial<Record<PieceSymbol, string>> = {
 
 const premovePromotionChoices: PieceSymbol[] = ['q', 'r', 'b', 'n']
 
-function restoreSession(session = loadActiveSession()) {
+function restoreSession(
+  session = loadActiveSession(),
+  preferredProfileId: BotProfileId = DEFAULT_BOT_PROFILE_ID,
+) {
   const fallbackControl = getTimeControl('unlimited')
   const fallback = () => {
     const now = Date.now()
+    const profile = botProfileForId(preferredProfileId)
     return {
       game: new Chess(), startFen: STANDARD_START_FEN, mode: 'bot' as GameMode,
-      botLevel: 'balanced' as BotLevel, orientation: 'white' as const,
+      botLevel: profile.engineLevel, botProfileId: profile.id, orientation: 'white' as const,
       humanColor: 'w' as Color, colorChoice: 'white' as HumanColorChoice,
       timeControl: fallbackControl, clock: createReadyClock(fallbackControl, 'w', now),
       clockHistory: [] as ClockState[], termination: null as GameTermination | null,
@@ -279,10 +295,13 @@ function restoreSession(session = loadActiveSession()) {
     const colorChoice = isHumanColorChoice(session.colorChoice)
       ? session.colorChoice
       : humanColor === 'b' ? 'black' : 'white'
+    const profile = isBotProfileId(session.botProfileId)
+      ? botProfileForId(session.botProfileId)
+      : profileForLegacyLevel(session.botLevel)
     return {
       game, startFen: session.startFen,
       mode: (session.mode === 'local' ? 'local' : 'bot') as GameMode,
-      botLevel: (['easy', 'balanced', 'strong'].includes(session.botLevel) ? session.botLevel : 'balanced') as BotLevel,
+      botLevel: profile.engineLevel, botProfileId: profile.id,
       orientation: session.orientation === 'black' ? 'black' as const : 'white' as const,
       humanColor, colorChoice,
       timeControl, clock, clockHistory,
@@ -300,6 +319,7 @@ interface PlayerBarProps {
   detail: string
   active: boolean
   isBot: boolean
+  botAvatar?: { initials: string; tone: BotProfileTone }
   thinking?: boolean
   clock: string
   lowTime: boolean
@@ -307,11 +327,13 @@ interface PlayerBarProps {
   flagged: boolean
 }
 
-function PlayerBar({ color, name, detail, active, isBot, thinking, clock, lowTime, paused, flagged }: PlayerBarProps) {
+function PlayerBar({ color, name, detail, active, isBot, botAvatar, thinking, clock, lowTime, paused, flagged }: PlayerBarProps) {
   const Avatar = isBot ? Bot : CircleUserRound
   return (
     <div className={`player-bar ${active ? 'player-bar--active' : ''}`}>
-      <div className={`player-avatar player-avatar--${color}`}><Avatar size={20} strokeWidth={2.1} /></div>
+      <div className={`player-avatar player-avatar--${color}${botAvatar ? ` player-avatar--${botAvatar.tone}` : ''}`}>
+        {botAvatar ? <span aria-hidden="true">{botAvatar.initials}</span> : <Avatar size={20} strokeWidth={2.1} />}
+      </div>
       <div className="player-copy">
         <strong>{name}</strong>
         <span>{detail}</span>
@@ -328,9 +350,18 @@ function PlayerBar({ color, name, detail, active, isBot, thinking, clock, lowTim
   )
 }
 
+function profileForStoredGame(item: StoredGame) {
+  return isBotProfileId(item.botProfileId)
+    ? botProfileForId(item.botProfileId)
+    : profileForLegacyLevel(item.botLevel)
+}
+
 export default function App() {
-  const initial = useMemo(restoreSession, [])
   const initialPreferences = useMemo(loadPreferences, [])
+  const initial = useMemo(
+    () => restoreSession(loadActiveSession(), initialPreferences.botProfileId),
+    [initialPreferences],
+  )
   const desktop = useMemo(() => isTauriRuntime(), [])
   const database = useMemo(() => desktop ? new DatabaseClient() : null, [desktop])
   const [tab, setTab] = useState<Tab>('play')
@@ -338,6 +369,7 @@ export default function App() {
   const [startFen, setStartFen] = useState(initial.startFen)
   const [mode, setMode] = useState<GameMode>(initial.mode)
   const [botLevel, setBotLevel] = useState<BotLevel>(initial.botLevel)
+  const [botProfileId, setBotProfileId] = useState<BotProfileId>(initial.botProfileId)
   const [orientation, setOrientation] = useState<'white' | 'black'>(initial.orientation)
   const [humanColor, setHumanColor] = useState<Color>(initial.humanColor)
   const [colorChoice, setColorChoice] = useState<HumanColorChoice>(initial.colorChoice)
@@ -427,8 +459,18 @@ export default function App() {
   const bottomColor = orientation === 'white' ? 'white' : 'black'
   const botColor = oppositeColor(humanColor)
   const humanSideLabel = humanColor === 'w' ? 'White' : 'Black'
-  const presetLabel = botLevel[0].toUpperCase() + botLevel.slice(1)
-  const levelLabel = engineSettings.profile === 'preset' ? presetLabel : engineSettingsLabel(engineSettings)
+  const botProfile = botProfileForId(botProfileId)
+  const isFallbackOpponent = engineName.startsWith('KnightBot')
+  const opponentName = isFallbackOpponent ? engineName : botProfile.name
+  const opponentStrength = isFallbackOpponent
+    ? 'Local fallback'
+    : engineSettings.profile === 'preset'
+      ? `Target ${botProfile.targetElo}`
+      : engineSettingsLabel(engineSettings)
+  const opponentDetail = isFallbackOpponent
+    ? engineDetail
+    : `Stockfish ${opponentStrength} · ${botProfile.openingCueLabel}`
+  const opponentAvatar = isFallbackOpponent ? undefined : { initials: botProfile.initials, tone: botProfile.tone }
   const clockSnapshot = snapshotClock(clock, clockNow)
   const gameFinished = game.isGameOver() || termination !== null
   const premoveWindow = mode === 'bot'
@@ -768,7 +810,7 @@ export default function App() {
     if (mode === 'bot') {
       if (thinking || !isHumanTurn(mode, game.turn(), humanColor)) return
       if (botAcceptsDraw(game, botColor, botLevel)) finishGame(agreedDraw(humanColor))
-      else setNotice(`${engineName} declined the draw offer.`)
+      else setNotice(`${opponentName} declined the draw offer.`)
       return
     }
     openDecision('draw-response')
@@ -791,19 +833,37 @@ export default function App() {
   const startFreshBotGame = (
     choice: HumanColorChoice = colorChoice,
     control: TimeControl = timeControl,
+    profile = botProfile,
   ) => {
     const nextHumanColor = resolveHumanColor(choice)
     const sideLabel = nextHumanColor === 'w' ? 'White' : 'Black'
     setColorChoice(choice)
     setHumanColor(nextHumanColor)
     setOrientation(nextHumanColor === 'w' ? 'white' : 'black')
+    setEngineName(desktop ? 'Stockfish' : 'Stockfish 18 Lite')
+    setEngineDetail(desktop ? 'Native UCI engine · on demand' : 'WebAssembly · on demand')
     restartPosition(
       new Chess(),
       STANDARD_START_FEN,
       choice === 'random'
-        ? `Random color selected — you play ${sideLabel}. The clock starts with the opening move.`
-        : `You play ${sideLabel}. The clock starts with the opening move.`,
+        ? `Random color selected — you play ${sideLabel}. ${profile.name}: ${profile.intro}`
+        : `You play ${sideLabel}. ${profile.name}: ${profile.intro}`,
       control,
+    )
+  }
+
+  const chooseBotProfile = (nextProfileId: BotProfileId) => {
+    if (nextProfileId === botProfileId) return
+    const nextProfile = botProfileForId(nextProfileId)
+    requestRestart(
+      `Play ${nextProfile.name}?`,
+      `Changing opponents starts a fresh game and replaces this ${history.length}-ply position.`,
+      `Play ${nextProfile.name}`,
+      () => {
+        setBotProfileId(nextProfile.id)
+        setBotLevel(nextProfile.engineLevel)
+        startFreshBotGame(colorChoice, timeControl, nextProfile)
+      },
     )
   }
 
@@ -832,13 +892,14 @@ export default function App() {
     if (mode === 'bot') {
       const chessColor: Color = color === 'white' ? 'w' : 'b'
       return chessColor === botColor
-        ? { name: engineName, detail: `${levelLabel} · ${engineDetail}`, isBot: true }
-        : { name: 'You', detail: `Playing ${color === 'white' ? 'White' : 'Black'}`, isBot: false }
+        ? { name: opponentName, detail: opponentDetail, isBot: true, botAvatar: opponentAvatar }
+        : { name: 'You', detail: `Playing ${color === 'white' ? 'White' : 'Black'}`, isBot: false, botAvatar: undefined }
     }
     return {
       name: color === 'white' ? 'White player' : 'Black player',
       detail: 'Hot-seat',
       isBot: false,
+      botAvatar: undefined,
     }
   }
 
@@ -1014,11 +1075,11 @@ export default function App() {
 
   const switchMode = (nextMode: GameMode) => {
     if (nextMode === mode) return
-    const label = nextMode === 'bot' ? `play against ${engineName}` : 'start a hot-seat game'
+    const label = nextMode === 'bot' ? `play against ${opponentName}` : 'start a hot-seat game'
     requestRestart(
       'Start a new game?',
       `Switching mode will replace the ${history.length}-ply unfinished game.`,
-      nextMode === 'bot' ? `Play ${engineName}` : 'Start hot-seat',
+      nextMode === 'bot' ? `Play ${opponentName}` : 'Start hot-seat',
       () => {
         setMode(nextMode)
         if (nextMode === 'bot') startFreshBotGame()
@@ -1054,6 +1115,9 @@ export default function App() {
       const restoredColorChoice = isHumanColorChoice(item.colorChoice)
         ? item.colorChoice
         : restoredHumanColor === 'b' ? 'black' : 'white'
+      const restoredProfile = isBotProfileId(item.botProfileId)
+        ? botProfileForId(item.botProfileId)
+        : profileForLegacyLevel(item.botLevel)
       requestRestart(
         destination === 'review' ? 'Review saved game?' : 'Open saved game?',
         `${destination === 'review' ? 'Reviewing' : 'Opening'} this game replaces the ${history.length}-ply unfinished game.`,
@@ -1069,7 +1133,11 @@ export default function App() {
           setClockHistory([]); setTermination(restoredTermination); setDecision(null)
           setMode(item.mode); setHumanColor(restoredHumanColor); setColorChoice(restoredColorChoice)
           if (item.mode === 'bot') setOrientation(restoredHumanColor === 'w' ? 'white' : 'black')
-          if (item.botLevel) setBotLevel(item.botLevel); setThinking(false)
+          if (item.mode === 'bot') {
+            setBotProfileId(restoredProfile.id)
+            setBotLevel(restoredProfile.engineLevel)
+          }
+          setThinking(false)
           savedPosition.current = terminalSessionFingerprint(
             next.fen(),
             restoredTermination?.result ?? gameResult(next),
@@ -1159,13 +1227,13 @@ export default function App() {
         nativeTactics = await database.mergeTacticsState(mergedTactics)
         saveBrowserTacticsState(nativeTactics)
         if (cancelled) return
-        const restored = restoreSession(snapshot.activeSession)
         const preferences = normalizePreferences(snapshot.preferences)
+        const restored = restoreSession(snapshot.activeSession, preferences.botProfileId)
         botRequestVersion.current += 1
         botClient.current?.cancel()
         clearPremove()
         setGame(restored.game); setStartFen(restored.startFen); setMode(restored.mode)
-        setBotLevel(restored.botLevel); setOrientation(restored.orientation)
+        setBotLevel(restored.botLevel); setBotProfileId(restored.botProfileId); setOrientation(restored.orientation)
         setHumanColor(restored.humanColor); setColorChoice(restored.colorChoice)
         setTimeControl(restored.timeControl); setClock(restored.clock)
         setClockHistory(restored.clockHistory); setTermination(restored.termination)
@@ -1195,17 +1263,17 @@ export default function App() {
 
   useEffect(() => {
     const session = {
-      pgn: termination ? sharePgn : game.pgn(), startFen, mode, botLevel, orientation, humanColor, colorChoice, timeControl, clock, clockHistory, termination,
+      pgn: termination ? sharePgn : game.pgn(), startFen, mode, botLevel, botProfileId, orientation, humanColor, colorChoice, timeControl, clock, clockHistory, termination,
     }
     saveActiveSession(session)
     if (database && databaseReady) void database.saveActiveSession(session).catch(reportDatabaseError)
-  }, [game, startFen, mode, botLevel, orientation, humanColor, colorChoice, timeControl, clock, clockHistory, termination, sharePgn, database, databaseReady, reportDatabaseError])
+  }, [game, startFen, mode, botLevel, botProfileId, orientation, humanColor, colorChoice, timeControl, clock, clockHistory, termination, sharePgn, database, databaseReady, reportDatabaseError])
 
   useEffect(() => {
-    const preferences = { soundsEnabled, engine: engineSettings }
+    const preferences = { soundsEnabled, engine: engineSettings, botProfileId }
     savePreferences(preferences)
     if (database && databaseReady) void database.savePreferences(preferences).catch(reportDatabaseError)
-  }, [soundsEnabled, engineSettings, database, databaseReady, reportDatabaseError])
+  }, [soundsEnabled, engineSettings, botProfileId, database, databaseReady, reportDatabaseError])
 
   useEffect(() => {
     const previous = previousWorkspace.current
@@ -1264,7 +1332,9 @@ export default function App() {
     if (!terminalFingerprint || savedPosition.current === terminalFingerprint) return
     const item: StoredGame = {
       id: `${Date.now()}-${game.fen()}`, playedAt: new Date().toISOString(), mode,
-      botLevel: mode === 'bot' ? botLevel : undefined, result: currentResult, pgn: sharePgn,
+      botLevel: mode === 'bot' ? botLevel : undefined,
+      botProfileId: mode === 'bot' ? botProfileId : undefined,
+      result: currentResult, pgn: sharePgn,
       finalFen: game.fen(), moveCount: game.history().length,
       timeControl, whiteTimeMs: clockSnapshot.whiteMs, blackTimeMs: clockSnapshot.blackMs,
       termination: termination ?? undefined,
@@ -1273,7 +1343,7 @@ export default function App() {
     setLibrary(saveGame(item))
     if (database && databaseReady) void database.saveGame(item).catch(reportDatabaseError)
     savedPosition.current = terminalFingerprint
-  }, [game, mode, botLevel, humanColor, colorChoice, gameFinished, currentResult, sharePgn, timeControl, clockSnapshot.whiteMs, clockSnapshot.blackMs, termination, database, databaseReady, reportDatabaseError])
+  }, [game, mode, botLevel, botProfileId, humanColor, colorChoice, gameFinished, currentResult, sharePgn, timeControl, clockSnapshot.whiteMs, clockSnapshot.blackMs, termination, database, databaseReady, reportDatabaseError])
 
   useEffect(() => {
     const client = new HybridEngineClient()
@@ -1301,6 +1371,10 @@ export default function App() {
     const requestFen = game.fen()
     const version = ++botRequestVersion.current
     const requestedAt = Date.now()
+    // A matching local cue is a real legal move, not a text overlay. It avoids
+    // spinning up Stockfish for the opening route and falls straight back to a
+    // bounded engine search when the game leaves that exact route.
+    const openingMove = selectProfileOpeningMove(game, startFen, botColor, botProfile)
     let pacingTimer: ReturnType<typeof window.setTimeout> | null = null
     let releasePacing: (() => void) | null = null
     const waitForPacing = (delay: number) => new Promise<void>((resolve) => {
@@ -1317,12 +1391,27 @@ export default function App() {
     })
     setThinking(true)
 
-    void client.search(requestFen, botLevel, engineSettings).then(async (result) => {
+    const moveRequest: Promise<EngineSearchResult> = openingMove
+      ? Promise.resolve({
+        move: openingMove,
+        ponder: null,
+        provider: 'opening-cue',
+        engineName: 'Local opening cue',
+      })
+      : client.search(requestFen, botLevel, engineSettings)
+
+    void moveRequest.then(async (result) => {
       if (version !== botRequestVersion.current) return
-      setEngineName(result.provider === 'stockfish' ? result.engineName : 'KnightBot')
-      setEngineDetail(result.provider === 'stockfish'
-        ? `${desktop ? 'Native UCI' : 'WebAssembly'}${result.depth ? ` · depth ${result.depth}` : ''}`
-        : 'Local fallback')
+      if (result.provider === 'stockfish') {
+        setEngineName(result.engineName)
+        setEngineDetail(`${desktop ? 'Native UCI' : 'WebAssembly'}${result.depth ? ` · depth ${result.depth}` : ''}`)
+      } else if (result.provider === 'opening-cue') {
+        setEngineName(desktop ? 'Stockfish' : 'Stockfish 18 Lite')
+        setEngineDetail('Local opening cue · engine stays idle')
+      } else {
+        setEngineName('KnightBot')
+        setEngineDetail('Local fallback')
+      }
       if (result.warning) setNotice(`Stockfish unavailable; KnightBot took over. ${result.warning}`)
       if (!result.move) return
       await waitForPacing(Math.max(0, BOT_MOVE_DISPLAY_FLOOR_MS[botLevel] - (Date.now() - requestedAt)))
@@ -1353,6 +1442,9 @@ export default function App() {
         setClock(nextClock)
         setClockNow(now)
         setGame(next); setSelected(null); setPromotion(null)
+        if (result.provider === 'opening-cue') {
+          setNotice(`${botProfile.name}: ${botOpeningReaction(botProfile, next)}`)
+        }
         playMoveSound(next)
       } catch {
         setNotice('Bot result was rejected safely.')
@@ -1378,7 +1470,7 @@ export default function App() {
         release?.()
       }
     }
-  }, [game, mode, humanColor, botColor, botLevel, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound])
+  }, [game, mode, humanColor, botColor, botLevel, botProfile, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound])
 
   const abortedGameCount = useMemo(() => library.filter((item) => item.moveCount === 0).length, [library])
   const visibleLibrary = useMemo(() => {
@@ -1388,9 +1480,12 @@ export default function App() {
       if (libraryFilter === 'reviewed' && !item.reviewed) return false
       if (libraryFilter === 'unreviewed' && item.reviewed) return false
       if (!query) return true
+      const storedProfile = item.mode === 'bot' ? profileForStoredGame(item) : null
       const searchable = [
         item.result,
-        item.mode === 'bot' ? `computer stockfish knightbot ${item.botLevel ?? ''} ${item.humanColor === 'b' ? 'black' : 'white'}` : 'hot-seat',
+        item.mode === 'bot'
+          ? `computer stockfish knightbot ${storedProfile?.name ?? ''} ${storedProfile?.openingCueLabel ?? ''} ${item.botLevel ?? ''} ${item.humanColor === 'b' ? 'black' : 'white'}`
+          : 'hot-seat',
         item.timeControl?.label ?? '',
         new Date(item.playedAt).toLocaleString(),
       ].join(' ').toLowerCase()
@@ -1436,14 +1531,14 @@ export default function App() {
             <h1 ref={workspaceTitle} id="workspace-title" tabIndex={-1}>{meta.title}</h1>
             <p>{meta.description}</p>
           </div>
-          <span className="session-pill"><i />{mode === 'bot' ? `${engineName} · ${levelLabel} · You: ${humanSideLabel}` : 'Hot-seat game'} · {timeControl.label}</span>
+          <span className="session-pill"><i />{mode === 'bot' ? `${opponentName} · ${opponentStrength} · You: ${humanSideLabel}` : 'Hot-seat game'} · {timeControl.label}</span>
         </header>
 
         {tab === 'play' && (
           <section className="play-workspace">
             <div className="board-stage">
               <div className="board-status">
-                <div><span>{premoveWindow ? `${engineName} is thinking — queue one premove.` : currentStatus}</span><strong>Material {formatEvaluation(evaluateMaterial(game, 'w'))}</strong></div>
+                <div><span>{premoveWindow ? `${opponentName} is thinking — queue one premove.` : currentStatus}</span><strong>Material {formatEvaluation(evaluateMaterial(game, 'w'))}</strong></div>
                 <button className="icon-button" type="button" onClick={() => setOrientation(orientation === 'white' ? 'black' : 'white')} title="Flip board">
                   <FlipHorizontal2 size={18} /><span>Flip</span>
                 </button>
@@ -1459,6 +1554,7 @@ export default function App() {
                 name={topPlayer.name}
                 detail={topPlayer.detail}
                 isBot={topPlayer.isBot}
+                botAvatar={topPlayer.botAvatar}
                 active={(clock.activeColor ?? clock.pausedColor) === (topColor === 'white' ? 'w' : 'b')}
                 thinking={thinking && topPlayer.isBot}
                 clock={formatClock(topColor === 'white' ? clockSnapshot.whiteMs : clockSnapshot.blackMs)}
@@ -1484,6 +1580,7 @@ export default function App() {
                 name={bottomPlayer.name}
                 detail={bottomPlayer.detail}
                 isBot={bottomPlayer.isBot}
+                botAvatar={bottomPlayer.botAvatar}
                 active={(clock.activeColor ?? clock.pausedColor) === (bottomColor === 'white' ? 'w' : 'b')}
                 thinking={thinking && bottomPlayer.isBot}
                 clock={formatClock(bottomColor === 'white' ? clockSnapshot.whiteMs : clockSnapshot.blackMs)}
@@ -1506,7 +1603,7 @@ export default function App() {
             <aside className="game-panel">
               <div className="game-panel__header">
                 <div className="panel-icon"><BrainCircuit size={22} /></div>
-                <div><span className="eyebrow">Current game</span><h2>{mode === 'bot' ? `Play ${engineName} · ${humanSideLabel}` : 'Local match'}</h2></div>
+                <div><span className="eyebrow">Current game</span><h2>{mode === 'bot' ? `Play ${opponentName} · ${humanSideLabel}` : 'Local match'}</h2></div>
                 <span className="live-dot" title="Session saved locally" />
               </div>
 
@@ -1557,14 +1654,11 @@ export default function App() {
                           : 'The board starts from your side; Flip remains available anytime.'}
                       </small>
                     </div>
-                    <label className="select-field">
-                      <span>Bot strength</span>
-                      <select value={botLevel} onChange={(event) => setBotLevel(event.target.value as BotLevel)} aria-label="Bot strength" disabled={engineSettings.profile !== 'preset'}>
-                        <option value="easy">Easy · relaxed</option>
-                        <option value="balanced">Balanced · thoughtful</option>
-                        <option value="strong">Strong · challenging</option>
-                      </select>
-                    </label>
+                    <BotProfilePicker
+                      selectedId={botProfileId}
+                      customEngine={engineSettings.profile !== 'preset'}
+                      onSelect={chooseBotProfile}
+                    />
                     <EngineSettingsPanel
                       settings={engineSettings}
                       desktop={desktop}
@@ -1638,7 +1732,11 @@ export default function App() {
               {gameFinished && (
                 <section className="game-over-card" aria-label="Game complete">
                   <Trophy size={22} />
-                  <div><span>Game complete · {currentResult}</span><strong>{currentStatus}</strong></div>
+                  <div>
+                    <span>Game complete · {currentResult}</span>
+                    <strong>{currentStatus}</strong>
+                    {mode === 'bot' && !isFallbackOpponent && <small className="game-over-card__message">{botProfile.name}: {botPostGameMessage(botProfile, currentResult, botColor)}</small>}
+                  </div>
                   <div className="game-over-actions">
                     <button className="primary-button" type="button" onClick={reviewCurrentGame}><Search size={16} />Review game</button>
                     <button className="secondary-button" type="button" onClick={reset}><RefreshCw size={16} />Play again</button>
@@ -1728,7 +1826,7 @@ export default function App() {
                 <article key={item.id} className="library-game">
                   <strong>{item.result}</strong>
                   <div className="library-game__details">
-                    <span>{item.mode === 'bot' ? `Computer · ${item.botLevel ?? 'custom'} · You: ${item.humanColor === 'b' ? 'Black' : 'White'}` : 'Hot-seat'}</span>
+                    <span>{item.mode === 'bot' ? `Computer · ${profileForStoredGame(item).name} · You: ${item.humanColor === 'b' ? 'Black' : 'White'}` : 'Hot-seat'}</span>
                     <small>{item.timeControl?.label ?? 'Unlimited'} · {new Date(item.playedAt).toLocaleString()} · {item.moveCount} ply</small>
                   </div>
                   <div className="library-game__state">{item.reviewed ? <em>Reviewed</em> : <span>Ready to review</span>}</div>

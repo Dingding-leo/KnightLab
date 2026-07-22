@@ -1,5 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import {
+  hasValidBotProfileField,
   hasValidPlayerSideFields,
   normalizeActiveSession,
   type ActiveSession,
@@ -63,6 +64,7 @@ function isStoredGame(value: unknown): value is StoredGame {
     && Number(value.moveCount) >= 0
     && Number(value.moveCount) <= 100_000
     && hasValidPlayerSideFields(value)
+    && hasValidBotProfileField(value)
 }
 
 function isActiveSession(value: unknown): value is ActiveSession {

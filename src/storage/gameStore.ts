@@ -2,6 +2,11 @@ import type { BotLevel, GameMode } from '../domain/chess'
 import type { ClockState, TimeControl } from '../domain/clock'
 import type { GameTermination } from '../domain/completion'
 import {
+  DEFAULT_BOT_PROFILE_ID,
+  isBotProfileId,
+  type BotProfileId,
+} from '../bots/profiles'
+import {
   DEFAULT_ENGINE_SETTINGS,
   normalizeEngineSettings,
   type EngineSettings,
@@ -20,6 +25,8 @@ export interface StoredGame {
   playedAt: string
   mode: GameMode
   botLevel?: BotLevel
+  /** Named local opponent. Omitted by games created before the opponent roster. */
+  botProfileId?: BotProfileId
   result: string
   pgn: string
   finalFen: string
@@ -41,6 +48,8 @@ export interface ActiveSession {
   startFen: string
   mode: GameMode
   botLevel: BotLevel
+  /** Named local opponent. Omitted by sessions created before the opponent roster. */
+  botProfileId?: BotProfileId
   orientation: 'white' | 'black'
   timeControl?: TimeControl
   clock?: ClockState
@@ -55,11 +64,13 @@ export interface ActiveSession {
 export interface Preferences {
   soundsEnabled: boolean
   engine: EngineSettings
+  botProfileId: BotProfileId
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
   soundsEnabled: true,
   engine: DEFAULT_ENGINE_SETTINGS,
+  botProfileId: DEFAULT_BOT_PROFILE_ID,
 }
 
 export function isHumanColor(value: unknown): value is HumanColor {
@@ -84,6 +95,13 @@ export function hasValidPlayerSideFields(value: unknown): value is {
     && (side.colorChoice === undefined || isColorChoice(side.colorChoice))
 }
 
+/** Profile IDs are optional for backwards compatibility, but never accepted when malformed. */
+export function hasValidBotProfileField(value: unknown): value is { botProfileId?: BotProfileId } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const profile = value as { botProfileId?: unknown }
+  return profile.botProfileId === undefined || isBotProfileId(profile.botProfileId)
+}
+
 function isStoredGame(value: unknown): value is StoredGame {
   if (!value || typeof value !== 'object') return false
   const game = value as Partial<StoredGame>
@@ -97,10 +115,11 @@ function isStoredGame(value: unknown): value is StoredGame {
     && (game.reviewed === undefined || typeof game.reviewed === 'boolean')
     && (game.reviewKey === undefined || (typeof game.reviewKey === 'string' && /^[0-9a-f]{16}$/.test(game.reviewKey)))
     && hasValidPlayerSideFields(game)
+    && hasValidBotProfileField(game)
 }
 
 function isActiveSession(value: unknown): value is ActiveSession {
-  if (!hasValidPlayerSideFields(value)) return false
+  if (!hasValidPlayerSideFields(value) || !hasValidBotProfileField(value)) return false
   const session = value as Partial<ActiveSession>
   return typeof session.pgn === 'string'
     && typeof session.startFen === 'string' && session.startFen.length > 0
@@ -178,6 +197,9 @@ export function normalizePreferences(value: unknown): Preferences {
       ? preferences.soundsEnabled
       : DEFAULT_PREFERENCES.soundsEnabled,
     engine: normalizeEngineSettings(preferences.engine),
+    botProfileId: isBotProfileId(preferences.botProfileId)
+      ? preferences.botProfileId
+      : DEFAULT_PREFERENCES.botProfileId,
   }
 }
 

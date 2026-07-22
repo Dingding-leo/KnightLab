@@ -9,6 +9,7 @@ KnightClub 0.2 uses:
 - `chess.js` as the legal-rules authority
 - A pure absolute-timestamp chess-clock state machine
 - A pure player-side domain for resolved White/Black/Random bot ownership
+- An original named-opponent profile domain with legal local opening cues
 - A pure completion domain for resignation, draw agreement and timeout
 - Lazy, optional Web Audio synthesis with no external audio assets
 - A custom accessible board UI
@@ -28,6 +29,10 @@ The application contains no required runtime network requests after its static f
 ### Player-side execution
 
 `humanColor` is a resolved game role (`w` or `b`), while `orientation` remains a separate presentation preference. A bot setup request may be White, Black or Random; Random resolves only when a fresh game begins and stores both the request and the resolved side, so session restore cannot silently redraw it. The engine searches whenever the opposite side is to move, allowing Stockfish to make the opening move when the user plays Black. Input, clocks, player bars, draw/resignation attribution and whole-turn undo all use this resolved ownership. Opening a restart or resignation decision immediately invalidates an active bot request; cancelling a decision resumes a fresh search only for the unchanged position.
+
+### Named-opponent execution
+
+`BotProfile` is original KnightClub data: name, monogram, bounded Stockfish target, presentation copy and a short opening-cue table. Choosing another opponent uses the existing restart gate, maps the profile to its established Easy/Balanced/Strong resource ceiling and persists the ID in the active session, completed game and preferences. On a bot turn, `selectProfileOpeningMove` requires the standard start FEN, exact SAN history, correct side to move and a successful `chess.js` application on a clone. A hit applies that legal authored move after the usual display pacing without constructing or searching an engine; every non-match immediately uses the normal bounded Stockfish request. This deliberately does not claim a midgame persona. If Stockfish fails, the UI identifies the generic KnightBot fallback rather than attributing its moves to a profile.
 
 ### Premove execution
 

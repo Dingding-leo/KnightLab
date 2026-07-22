@@ -36,11 +36,24 @@ describe('game library normalization', () => {
     expect(normalizeLibrary([validGame, resolvedSide])).toEqual([validGame, resolvedSide])
   })
 
+  it('preserves a known named opponent while retaining games saved before profiles existed', () => {
+    const namedOpponent = { ...validGame, id: 'game-with-profile', botProfileId: 'rowan-pike' as const }
+
+    expect(normalizeLibrary([validGame, namedOpponent])).toEqual([validGame, namedOpponent])
+  })
+
   it('drops games with malformed resolved player sides', () => {
     expect(normalizeLibrary([
       validGame,
       { ...validGame, id: 'bad-human-color', humanColor: 'white' },
       { ...validGame, id: 'bad-color-choice', colorChoice: 'coin-flip' },
+    ])).toEqual([validGame])
+  })
+
+  it('drops games with unknown opponent profiles instead of displaying an unverified identity', () => {
+    expect(normalizeLibrary([
+      validGame,
+      { ...validGame, id: 'unknown-profile', botProfileId: 'champion' },
     ])).toEqual([validGame])
   })
 })
@@ -68,5 +81,13 @@ describe('active session normalization', () => {
     expect(normalizeActiveSession(resolvedSide)).toEqual(resolvedSide)
     expect(normalizeActiveSession({ ...legacySession, humanColor: 'black' })).toBeNull()
     expect(normalizeActiveSession({ ...legacySession, colorChoice: 'coin-flip' })).toBeNull()
+  })
+
+  it('keeps known named opponents and rejects unknown profile IDs', () => {
+    expect(normalizeActiveSession({ ...legacySession, botProfileId: 'mira-vale' })).toEqual({
+      ...legacySession,
+      botProfileId: 'mira-vale',
+    })
+    expect(normalizeActiveSession({ ...legacySession, botProfileId: 'champion' })).toBeNull()
   })
 })

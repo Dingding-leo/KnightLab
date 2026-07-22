@@ -11,19 +11,20 @@ Status values are **Backlog**, **In Progress**, **Blocked**, **Completed** and *
 | Phase 2 persistent review and coaching | In Progress | Completed reports use schema v5 SQLite or bounded browser fallback, restore by canonical game key and mark linked Library games Reviewed; selected adverse moves receive conservative, rules-proven Coach evidence directly on the board, with keyboard replay navigation and no additional Coach/review search. A self-contained retry queue is persisted independently of report retention; resumable work and deeper tactical proof remain |
 | Phase 3 recorded-review continuation | Completed | Train reconstructs a completed review's saved Stockfish `solutionLineSan` PV locally rather than using original-PGN continuation. It auto-plays recorded opponent replies, retains only transient line progress, advances scheduling once after a full unassisted line and fails closed for malformed non-empty saved PVs. 20 focused tests, the 36-file/167-test frontend suite, lint, typecheck, web/Rust/Tauri builds and a real browser Review → Train continuation walkthrough passed; optional hint/reveal/skip manual regression remains in `docs/TESTING.md`. |
 | UX workspace handoff | Completed | A real primary-workspace transition returns the player to the top and focuses the named workspace heading, while an active-tab click preserves the current reading position. Focused 5-file/27-test and full 35-file/155-test frontend suites, lint, typecheck, web build, 23 Rust tests, the macOS Tauri bundle and in-app browser evidence passed; dedicated desktop UX validation remains pending. |
-| Play UX follow-up | In Progress | First-move clock arming, unfinished-game replacement confirmation, touch/pen pointer dragging, clearer pieces, player-side choice, a safe one-move bot-turn premove and Library search/filter/direct-review controls are implemented; browser regression is still in progress |
+| Play UX follow-up | In Progress | First-move clock arming, unfinished-game replacement confirmation, touch/pen pointer dragging, clearer pieces, named local opponent selection, player-side choice, a safe one-move bot-turn premove and Library search/filter/direct-review controls are implemented; browser regression is still in progress |
 
 ## Backlog
 
 | Workstream | Status | Next deliverable |
 |---|---|---|
 | Phase 3 training | Backlog | Licensed tactics importer and broader adaptive training queue |
-| Phase 4 product polish | Backlog | Original bot profiles, themes, ratings and signed packages |
+| Phase 4 product polish | Backlog | Midgame candidate-sampled bot styles, themes, ratings and signed packages |
 
 ## Completed
 
 | Workstream | Status | Evidence |
 |---|---|---|
+| Named local opponent starter roster | Verified | Mira Vale, Rowan Pike and Nia Cross replace generic strength-only selection with an accessible card roster, persistent named identities and exact legal zero-engine-cost opening routes. The 45-file/213-test frontend suite, 30-test Rust suite, lint, typecheck, web build and macOS Tauri bundle passed; principled candidate-sampled midgame styles remain separate work. |
 | Phase 2 in-session full-game review | Verified | Cancellable per-move Stockfish jobs, nonlinear accuracy, contextual classes, turning points and two real native four-ply reviews including checkmate |
 | Phase 1 local PGN/FEN transfer | Completed | Explicit Play PGN/FEN controls with adjacent feedback and keyboard-focusable local Review import are integrated. Picker imports reject declared oversize before `File.text()`, retain only the newest selection and accept valid PGN misnamed `.fen`. The final 35-file/155-test suite, lint, typecheck, web build, 23 Rust tests and the macOS Tauri bundle passed. Browser verification covered the controls, valid FEN and invalid-FEN preservation; desktop transfer walkthrough remains documented as handoff work. |
 | UX desktop board clarity | Completed | Above 920 px, the board-stage viewport reserve is 180 px rather than 260 px, expanding the wide-board target from about 541 px to about 621 px at a 1470 × 801 audit while the existing roughly 96.5%-of-square pieces remain unchanged. At 920 px and below the 260 px reserve remains, and at 700 px and below the board remains full width. The 35-file/155-test suite, typecheck, lint, web build and macOS Tauri bundle passed; a manual packaged-desktop walkthrough remains pending. |

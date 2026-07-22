@@ -4,6 +4,8 @@
 
 ### Added
 
+- Three original named local opponents with accessible monogram cards, target-strength disclosure, local opening-cue feedback and result-aware post-game copy
+- Strictly legal, exact-history standard-start opening cues that apply a profile's real authored move without starting Stockfish, plus persistent profile IDs for active sessions, preferences and completed games
 - Original local Tactics Sprint: a three-position immediate practice path with no initial answer/PV exposure, local legal replay, two-stage hints, explicit reveal, reset and terminal outcome metrics
 - Bounded tactics progress plus immutable-attempt persistence in browser storage and SQLite schema v5, with deterministic reconciliation and atomic native attempt/progress recording
 - Explicit Review waiting state while a live bot move owns the local engine
@@ -72,6 +74,7 @@
 
 ### Changed
 
+- Play, player bars, session status and Library now identify the selected named opponent instead of exposing a generic `balanced` technical label; Custom UCI settings explicitly disclose that they override the profile's default strength
 - Review, Train and Insights are now independently loaded local workspaces with hover/focus prefetch, stable loading feedback and a scoped reload recovery instead of adding their code to the initial Play bundle
 - Browser and desktop Stockfish runtimes now reuse only acknowledged unchanged UCI option blocks while retaining `isready` fences, preventing repeated Hash/option churn during continuous play and full-game review
 - Opening Play no longer probes Stockfish or constructs the KnightBot fallback worker. Both engines initialize only for a real bot move or explicit verification.
@@ -106,6 +109,7 @@
 
 ### Verification
 
+- Named-opponent slice: lint, typecheck, the 45-file / 213-test frontend suite, full 30-test Rust suite, production web build and macOS `KnightClub.app` bundle passed. Profile contracts cover exact legal opening routes, malformed-ID rejection, legacy strength mapping and browser/native JSON payload round-trips; the manual browser/desktop profile checklist remains in `docs/TESTING.md`.
 - Responsive workspace/engine pass: lint, typecheck, the 43-file / 202-test frontend suite, full 30-test Rust suite, production web build and macOS `KnightClub.app` bundle passed. The local Vite server responded successfully at `http://127.0.0.1:5173/`; the production entry is 348.29 kB / 108.20 kB gzip, with Review/Train/Insights emitted as independent async chunks.
 - Workspace handoff: focused 5-file / 27-test suite and full 35-file / 155-test frontend suite passed, along with lint, typecheck, web build, 23 Rust tests and the macOS Tauri bundle. In-app browser verification observed Play at `scrollY = 550` changing to Review at `scrollY = 0`, with the Review title focused and 37 px from the viewport top; activating Review again at `scrollY = 300` preserved `scrollY = 300`. A dedicated packaged-desktop UX walkthrough remains pending.
 - Local PGN/FEN transfer: `npm test` passed (35 files / 155 tests), as did lint, typecheck, web build, 23 Rust tests and the macOS Tauri bundle at `src-tauri/target/release/bundle/macos/KnightClub.app`. Automated coverage includes pre-read declared-size rejection, latest-selection-wins, valid PGN misnamed `.fen`, a focusable picker and toolbar-adjacent feedback. Browser verification covered explicit Play controls, valid Review FEN and invalid-FEN timeline preservation; a dedicated desktop transfer walkthrough remains a documented handoff item.

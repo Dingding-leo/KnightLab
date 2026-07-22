@@ -312,6 +312,10 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .player-avatar--white { color: #2f3830; background: #dcded5; }
 .player-avatar--black { color: #d5dbd3; background: #293029; }
+.player-avatar > span { font-size: 10px; font-weight: 900; letter-spacing: -.04em; }
+.player-avatar--mira { color: #fff1f4; background: linear-gradient(135deg, #a94662, #5b2537); }
+.player-avatar--rowan { color: #efffd9; background: linear-gradient(135deg, #678e3e, #2f542c); }
+.player-avatar--nia { color: #fff6d9; background: linear-gradient(135deg, #b47a36, #62421f); }
 
 .player-copy { min-width: 0; display: grid; gap: 2px; }
 .player-copy strong { font-size: 12px; line-height: 1; }
@@ -626,6 +630,75 @@ button { -webkit-tap-highlight-color: transparent; }
 .color-choice__piece .piece { width: 100%; height: 100%; transform: none; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .38)); }
 .color-choice__hint { color: var(--muted); font-size: 9px; line-height: 1.35; }
 
+.bot-profile-picker {
+  margin-top: 11px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 11px;
+  background: linear-gradient(135deg, rgba(163, 214, 92, .05), rgba(12, 15, 12, .35));
+  display: grid;
+  gap: 8px;
+}
+
+.bot-profile-picker__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.bot-profile-picker__heading small { color: var(--muted-strong); font-size: 9px; font-weight: 700; }
+.bot-profile-picker__options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+
+.bot-profile-card {
+  min-width: 0;
+  min-height: 76px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(18, 23, 18, .6);
+  color: var(--muted-strong);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .14s ease, color .14s ease, background .14s ease, transform .14s ease;
+}
+
+.bot-profile-card:hover { border-color: var(--line-strong); color: var(--text); background: var(--surface-hover); transform: translateY(-1px); }
+.bot-profile-card.is-active { border-color: rgba(163, 214, 92, .64); color: var(--text); background: rgba(163, 214, 92, .1); box-shadow: inset 0 0 0 1px rgba(163, 214, 92, .08); }
+
+.bot-profile-card__avatar {
+  width: 27px;
+  height: 27px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  color: #eff6e9;
+  background: #43513f;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: -.04em;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .12);
+}
+
+.bot-profile-card--mira .bot-profile-card__avatar { background: linear-gradient(135deg, #a94662, #5b2537); }
+.bot-profile-card--rowan .bot-profile-card__avatar { background: linear-gradient(135deg, #678e3e, #2f542c); }
+.bot-profile-card--nia .bot-profile-card__avatar { background: linear-gradient(135deg, #b47a36, #62421f); }
+.bot-profile-card__copy { min-width: 0; display: grid; gap: 2px; }
+.bot-profile-card__copy strong { overflow: hidden; font-size: 10px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+.bot-profile-card__copy small,
+.bot-profile-card__copy em { overflow: hidden; color: var(--muted); font-size: 8px; font-style: normal; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.bot-profile-card__copy em { color: var(--muted-strong); font-weight: 700; }
+.bot-profile-picker__hint { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.bot-profile-picker__hint strong { color: var(--text); }
+
 .select-field { margin-top: 10px; display: grid; gap: 6px; }
 .select-field > span,
 .field-label,
@@ -897,6 +970,7 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
 .game-over-card > div:first-of-type { display: grid; gap: 2px; }
 .game-over-card span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
 .game-over-card strong { color: var(--text); font-size: 12px; }
+.game-over-card__message { color: var(--muted-strong); font-size: 9px; line-height: 1.35; }
 .game-over-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .game-over-actions button { min-height: 38px; padding: 0 10px; font-size: 10px; }
 

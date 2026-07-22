@@ -19,6 +19,7 @@ fn game(id: &str) -> StoredGameRecord {
             "id": id,
             "playedAt": "2026-07-22T00:00:00.000Z",
             "mode": "bot",
+            "botProfileId": "rowan-pike",
             "result": "1-0",
             "pgn": "1. e4 e5 2. Nf3 Nc6 1-0",
             "finalFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
@@ -112,8 +113,8 @@ fn round_trips_state_and_keeps_legacy_import_atomic_and_idempotent() {
     let opened = DatabaseRepository::open(&directory.path().join("data.sqlite3")).unwrap();
     let mut repository = opened.repository;
     let legacy = LegacyImport {
-        active_session: Some(json!({ "pgn": "1. e4", "startFen": "start" })),
-        preferences: Some(json!({ "soundsEnabled": false })),
+        active_session: Some(json!({ "pgn": "1. e4", "startFen": "start", "botProfileId": "rowan-pike" })),
+        preferences: Some(json!({ "soundsEnabled": false, "botProfileId": "rowan-pike" })),
         games: vec![game("game-1")],
     };
 
@@ -123,6 +124,7 @@ fn round_trips_state_and_keeps_legacy_import_atomic_and_idempotent() {
     assert_eq!(snapshot.active_session, legacy.active_session);
     assert_eq!(snapshot.preferences, legacy.preferences);
     assert_eq!(snapshot.games.len(), 1);
+    assert_eq!(snapshot.games[0]["botProfileId"], "rowan-pike");
 
     repository.clear_active_session().unwrap();
     repository.clear_games().unwrap();

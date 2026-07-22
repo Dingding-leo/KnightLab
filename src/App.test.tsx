@@ -27,6 +27,10 @@ describe('bot player-side setup', () => {
     expect(markup).toContain('>Random<')
     expect(markup).toContain('You are White')
     expect(markup).toContain('Clock starts with the opening move.')
+    expect(markup).toContain('Choose a local opponent')
+    expect(markup).toContain('Mira Vale')
+    expect(markup).toContain('Rowan Pike')
+    expect(markup).toContain('Nia Cross')
   })
 
   it('restores a persisted Black-side bot session without redrawing its random choice', () => {
@@ -45,6 +49,7 @@ describe('bot player-side setup', () => {
     expect(markup).toContain('You: Black')
     expect(markup).toContain('Playing Black')
     expect(markup).toContain('Premove mode: choose one black move while the bot thinks.')
+    expect(markup).toContain('Rowan Pike')
   })
 })
 
