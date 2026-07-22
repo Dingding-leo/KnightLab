@@ -31,6 +31,8 @@ import {
 import './App.css'
 import { BotProfilePicker } from './components/BotProfilePicker'
 import { ChessBoard } from './components/ChessBoard'
+import { ClockRuntime } from './components/ClockRuntime'
+import { useClockSnapshot } from './components/clockRuntimeContext'
 import { createPgnTimeline } from './analysis/analysisModel'
 import { EngineSettingsPanel, type EngineStatus } from './components/EngineSettingsPanel'
 import { GameDecisionDialog, type GameDecision } from './components/GameDecisionDialog'
@@ -59,7 +61,6 @@ import {
   getTimeControl,
   isTimeControl,
   isClockState,
-  nextClockTickDelay,
   normalizeClockState,
   pauseClock,
   resumeClock,
@@ -323,13 +324,16 @@ interface PlayerBarProps {
   isBot: boolean
   botAvatar?: { initials: string; tone: BotProfileTone }
   thinking?: boolean
-  clock: string
-  lowTime: boolean
   paused: boolean
-  flagged: boolean
 }
 
-function PlayerBar({ color, name, detail, active, isBot, botAvatar, thinking, clock, lowTime, paused, flagged }: PlayerBarProps) {
+function PlayerBar({ color, name, detail, active, isBot, botAvatar, thinking, paused }: PlayerBarProps) {
+  const snapshot = useClockSnapshot()
+  const chessColor: Color = color === 'white' ? 'w' : 'b'
+  const remaining = chessColor === 'w' ? snapshot.whiteMs : snapshot.blackMs
+  const clock = formatClock(remaining)
+  const lowTime = remaining !== null && remaining < 20_000
+  const flagged = snapshot.flaggedColor === chessColor
   const Avatar = isBot ? Bot : CircleUserRound
   return (
     <div className={`player-bar ${active ? 'player-bar--active' : ''}`}>
@@ -378,7 +382,6 @@ export default function App() {
   const [timeControl, setTimeControl] = useState<TimeControl>(initial.timeControl)
   const [clock, setClock] = useState<ClockState>(initial.clock)
   const [clockHistory, setClockHistory] = useState<ClockState[]>(initial.clockHistory)
-  const [clockNow, setClockNow] = useState(Date.now())
   const [termination, setTermination] = useState<GameTermination | null>(initial.termination)
   const [decision, setDecision] = useState<GameDecision | null>(null)
   const [soundsEnabled, setSoundsEnabled] = useState(initialPreferences.soundsEnabled)
@@ -413,6 +416,7 @@ export default function App() {
   const [engineDetail, setEngineDetail] = useState(desktop ? 'Native UCI engine · on demand' : 'WebAssembly · on demand')
   const botClient = useRef<HybridEngineClient | null>(null)
   const soundPlayer = useRef<GameSoundPlayer | null>(null)
+  const clockNowRef = useRef(Date.now())
   const workspaceTitle = useRef<HTMLHeadingElement | null>(null)
   const previousWorkspace = useRef<Tab>('play')
   const premoveRef = useRef<QueuedPremove | null>(premove)
@@ -420,6 +424,9 @@ export default function App() {
   const tacticsStateRef = useRef(tacticsState)
   const tacticsWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const soundsEnabledRef = useRef(soundsEnabled)
+  const captureClockNow = useCallback((nowMs: number) => {
+    clockNowRef.current = nowMs
+  }, [])
   const playBoardHandlers = useRef<{
     onSquareClick: (square: Square) => void
     onMoveAttempt: (from: Square, to: Square) => void
@@ -473,7 +480,6 @@ export default function App() {
     ? engineDetail
     : `Stockfish ${opponentStrength} · ${botProfile.openingCueLabel}`
   const opponentAvatar = isFallbackOpponent ? undefined : { initials: botProfile.initials, tone: botProfile.tone }
-  const clockSnapshot = snapshotClock(clock, clockNow)
   const gameFinished = game.isGameOver() || termination !== null
   const premoveWindow = mode === 'bot'
     && isBotTurn(mode, game.turn(), humanColor)
@@ -749,7 +755,7 @@ export default function App() {
     pendingRestart.current = action
     const resumeAfter = Boolean(clock.activeColor)
     clearPremove()
-    setClock(pauseClock(clock, now)); setClockNow(now); setSelected(null); setPromotion(null)
+    setClock(pauseClock(clock, now)); captureClockNow(now); setSelected(null); setPromotion(null)
     setDecision({ kind: 'restart', title, description, confirmLabel, resumeAfter })
   }
 
@@ -761,9 +767,17 @@ export default function App() {
       botClient.current?.cancel()
     }
     setClock((current) => pauseClock(current, now))
-    setClockNow(now); setTermination(nextTermination); setDecision(null)
+    captureClockNow(now); setTermination(nextTermination); setDecision(null)
     clearPremove(); setSelected(null); setPromotion(null); setThinking(false); setNotice('')
     playSound('game-end')
+  }
+
+  const handleClockFlag = (loser: Color) => {
+    if (termination || game.isGameOver()) return
+    const snapshot = snapshotClock(clock, clockNowRef.current)
+    if (snapshot.flaggedColor !== loser) return
+    const opponent: Color = loser === 'w' ? 'b' : 'w'
+    finishGame(timedOut(loser, hasMatingMaterial(game, opponent)))
   }
 
   const openDecision = (kind: 'resign' | 'draw-response') => {
@@ -776,7 +790,7 @@ export default function App() {
     }
     const resumeAfter = Boolean(clock.activeColor)
     clearPremove()
-    setClock(pauseClock(clock, now)); setClockNow(now); setSelected(null); setPromotion(null)
+    setClock(pauseClock(clock, now)); captureClockNow(now); setSelected(null); setPromotion(null)
     if (kind === 'resign') {
       setDecision({ kind, actor: mode === 'bot' ? humanColor : game.turn(), resumeAfter })
     } else {
@@ -788,7 +802,7 @@ export default function App() {
     if (!decision) return
     const now = Date.now()
     if (decision.resumeAfter) setClock((current) => resumeClock(current, now))
-    setClockNow(now)
+    captureClockNow(now)
     if (decision.kind === 'draw-response') setNotice('Draw offer declined. The game continues.')
     if (decision.kind === 'restart') pendingRestart.current = null
     setDecision(null)
@@ -913,7 +927,7 @@ export default function App() {
     try {
       setClockHistory((items) => [...items, settleClock(clock, now)])
       setClock(completeClockMove(clock, game.turn(), now))
-      setClockNow(now)
+      captureClockNow(now)
       clearPremove(); setGame(next); setSelected(null); setPromotion(null); setNotice('')
       playMoveSound(next)
     } catch { setNotice('Time expired before that move completed.') }
@@ -1072,7 +1086,7 @@ export default function App() {
       clearPremove()
       setClock(pauseClock(clock, now)); setSelected(null); setPromotion(null); setNotice('Clock paused.')
     }
-    setClockNow(now)
+    captureClockNow(now)
   }
 
   const switchMode = (nextMode: GameMode) => {
@@ -1303,28 +1317,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (gameFinished) return
-    const delay = nextClockTickDelay(clock, Date.now())
-    if (delay === null) return
-    const timer = window.setTimeout(() => setClockNow(Date.now()), delay)
-    return () => window.clearTimeout(timer)
-  }, [clock, clockNow, gameFinished])
-
-  useEffect(() => {
-    const loser = clockSnapshot.flaggedColor
-    if (!loser || termination || game.isGameOver()) return
-    const opponent: Color = loser === 'w' ? 'b' : 'w'
-    if (mode === 'bot') {
-      botRequestVersion.current += 1
-      botClient.current?.cancel()
-    }
-    setClock((current) => pauseClock(current, Date.now()))
-    setTermination(timedOut(loser, hasMatingMaterial(game, opponent)))
-    clearPremove(); setSelected(null); setPromotion(null); setThinking(false)
-    playSound('game-end')
-  }, [clockSnapshot.flaggedColor, game, termination, mode, playSound])
-
-  useEffect(() => {
     if (!game.isGameOver() || !clock.activeColor) return
     setClock((current) => pauseClock(current, Date.now()))
   }, [game, clock.activeColor])
@@ -1332,20 +1324,21 @@ export default function App() {
   useEffect(() => {
     const terminalFingerprint = terminalSessionFingerprint(game.fen(), currentResult, gameFinished)
     if (!terminalFingerprint || savedPosition.current === terminalFingerprint) return
+    const terminalClock = snapshotClock(clock, clockNowRef.current)
     const item: StoredGame = {
       id: `${Date.now()}-${game.fen()}`, playedAt: new Date().toISOString(), mode,
       botLevel: mode === 'bot' ? botLevel : undefined,
       botProfileId: mode === 'bot' ? botProfileId : undefined,
       result: currentResult, pgn: sharePgn,
       finalFen: game.fen(), moveCount: game.history().length,
-      timeControl, whiteTimeMs: clockSnapshot.whiteMs, blackTimeMs: clockSnapshot.blackMs,
+      timeControl, whiteTimeMs: terminalClock.whiteMs, blackTimeMs: terminalClock.blackMs,
       termination: termination ?? undefined,
       ...(mode === 'bot' ? { humanColor, colorChoice } : {}),
     }
     setLibrary(saveGame(item))
     if (database && databaseReady) void database.saveGame(item).catch(reportDatabaseError)
     savedPosition.current = terminalFingerprint
-  }, [game, mode, botLevel, botProfileId, humanColor, colorChoice, gameFinished, currentResult, sharePgn, timeControl, clockSnapshot.whiteMs, clockSnapshot.blackMs, termination, database, databaseReady, reportDatabaseError])
+  }, [game, mode, botLevel, botProfileId, humanColor, colorChoice, gameFinished, currentResult, sharePgn, timeControl, clock, termination, database, databaseReady, reportDatabaseError])
 
   useEffect(() => {
     const client = new HybridEngineClient()
@@ -1448,7 +1441,7 @@ export default function App() {
         }
         setClockHistory((items) => [...items, ...historySnapshots])
         setClock(nextClock)
-        setClockNow(now)
+        captureClockNow(now)
         setGame(next); setSelected(null); setPromotion(null)
         if (result.provider === 'opening-cue') {
           setNotice(`${botProfile.name}: ${botOpeningReaction(botProfile, next)}`)
@@ -1480,7 +1473,7 @@ export default function App() {
         release?.()
       }
     }
-  }, [game, mode, humanColor, botColor, botLevel, botProfile, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound])
+  }, [game, mode, humanColor, botColor, botLevel, botProfile, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound, captureClockNow])
 
   const abortedGameCount = useMemo(() => library.filter((item) => item.moveCount === 0).length, [library])
   const visibleLibrary = useMemo(() => {
@@ -1507,7 +1500,8 @@ export default function App() {
   const bottomPlayer = playerFor(bottomColor)
 
   return (
-    <div className="app-shell">
+    <ClockRuntime state={clock} gameFinished={gameFinished} onTick={captureClockNow} onFlag={handleClockFlag}>
+      <div className="app-shell">
       <aside className="app-nav">
         <button className="brand" type="button" onClick={() => navigateTo('play')} aria-label="KnightClub home">
           <span className="brand-mark"><Swords size={23} strokeWidth={2.4} /></span>
@@ -1567,10 +1561,7 @@ export default function App() {
                 botAvatar={topPlayer.botAvatar}
                 active={(clock.activeColor ?? clock.pausedColor) === (topColor === 'white' ? 'w' : 'b')}
                 thinking={thinking && topPlayer.isBot}
-                clock={formatClock(topColor === 'white' ? clockSnapshot.whiteMs : clockSnapshot.blackMs)}
-                lowTime={(topColor === 'white' ? clockSnapshot.whiteMs : clockSnapshot.blackMs) !== null && (topColor === 'white' ? clockSnapshot.whiteMs! : clockSnapshot.blackMs!) < 20_000}
                 paused={Boolean(clock.pausedColor)}
-                flagged={clockSnapshot.flaggedColor === (topColor === 'white' ? 'w' : 'b')}
               />
               <ChessBoard
                 game={game}
@@ -1593,10 +1584,7 @@ export default function App() {
                 botAvatar={bottomPlayer.botAvatar}
                 active={(clock.activeColor ?? clock.pausedColor) === (bottomColor === 'white' ? 'w' : 'b')}
                 thinking={thinking && bottomPlayer.isBot}
-                clock={formatClock(bottomColor === 'white' ? clockSnapshot.whiteMs : clockSnapshot.blackMs)}
-                lowTime={(bottomColor === 'white' ? clockSnapshot.whiteMs : clockSnapshot.blackMs) !== null && (bottomColor === 'white' ? clockSnapshot.whiteMs! : clockSnapshot.blackMs!) < 20_000}
                 paused={Boolean(clock.pausedColor)}
-                flagged={clockSnapshot.flaggedColor === (bottomColor === 'white' ? 'w' : 'b')}
               />
               <div className="board-toolbar" role="toolbar" aria-label="Game actions">
                 <button type="button" onClick={undo} disabled={!canUndo} title="Undo turn (⌘/Ctrl+Z)"><RotateCcw size={18} /><span>Undo</span></button>
@@ -1881,6 +1869,7 @@ export default function App() {
         </div>
       )}
       {decision && <GameDecisionDialog decision={decision} onCancel={cancelDecision} onConfirm={confirmDecision} />}
-    </div>
+      </div>
+    </ClockRuntime>
   )
 }

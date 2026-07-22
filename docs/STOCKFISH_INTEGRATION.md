@@ -35,9 +35,9 @@ Candidates must be regular executable files. The path is passed directly to `std
 
 | Level | Elo | Skill | Move time | Node cap | Threads | Hash |
 |---|---:|---:|---:|---:|---:|---:|
-| Easy | 1320 | 2 | 80 ms | 10,000 | 1 | 16 MB |
-| Balanced | 1700 | 8 | 160 ms | 30,000 | 1 | 16 MB |
-| Strong | 2200 | 14 | 280 ms | 70,000 | 1 | 32 MB |
+| Easy | 1320 | 2 | 60 ms | 6,000 | 1 | 16 MB |
+| Balanced | 1700 | 8 | 120 ms | 18,000 | 1 | 16 MB |
+| Strong | 2200 | 14 | 200 ms | 45,000 | 1 | 32 MB |
 
 All three enable `UCI_LimitStrength` and stop on whichever time or node limit arrives first. The UI separately uses a short cancellable display floor (260/360/480 ms) so lower compute budgets do not make play look accidentally instantaneous. These are initial product presets, not rating guarantees; future calibration should use a fixed test suite and recorded hardware.
 

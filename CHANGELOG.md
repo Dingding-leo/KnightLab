@@ -81,9 +81,9 @@
 - Review, Train and Insights are now independently loaded local workspaces with hover/focus prefetch, stable loading feedback and a scoped reload recovery instead of adding their code to the initial Play bundle
 - Browser and desktop Stockfish runtimes now reuse only acknowledged unchanged UCI option blocks while retaining `isready` fences, preventing repeated Hash/option churn during continuous play and full-game review
 - Opening Play no longer probes Stockfish or constructs the KnightBot fallback worker. Both engines initialize only for a real bot move or explicit verification.
-- Easy/Balanced/Strong play presets now use 80/160/280 ms, 10k/30k/70k node limits, one thread and 16/16/32 MB hash respectively; a cancellable UI pacing floor preserves a natural reply cadence without extra search CPU.
+- Easy/Balanced/Strong play presets now use 60/120/200 ms, 6k/18k/45k node limits, one thread and 16/16/32 MB hash respectively; the same cancellable UI pacing floor preserves a natural reply cadence without extra search CPU.
 - The fallback KnightBot is a bounded one-ply recovery path instead of a depth-two full-tree search.
-- Normal clocks schedule the next visible second instead of re-rendering the entire app every 100 ms; low-time tenths and exact flag fall remain intact. The Play board, pieces and move list now skip clock-only renders.
+- A shared clock runtime now confines visible-second and low-time-tenth updates to player-clock consumers, preserves exact timeout timestamps and reports one flag while every workspace remains mounted. Memoized board-square wrappers keep selection, drag, premove and keyboard focus from replacing all 64 buttons.
 - Review opens with Quick one-line analysis and waits for any pending bot turn instead of intentionally competing for local CPU.
 - Production browser builds register the service worker; development and Tauri do not, while desktop startup removes stale PWA caches left by earlier Tauri builds
 - Fresh timed games are armed until the first legal move instead of charging while the player is choosing an opening
@@ -112,6 +112,7 @@
 
 ### Verification
 
+- Play performance pass: lint, typecheck, the 47-file / 222-test frontend suite, full 32-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Clock contracts cover normal/low-time/exact-flag frames; browser/native UCI fixtures prove the lower mirrored caps and unchanged bounded two-PV route. A manual low-time/drag/premove/keyboard walkthrough remains release handoff work.
 - Named-opponent slice: lint, typecheck, the 45-file / 213-test frontend suite, full 30-test Rust suite, production web build and macOS `KnightClub.app` bundle passed. Profile contracts cover exact legal opening routes, malformed-ID rejection, legacy strength mapping and browser/native JSON payload round-trips; the manual browser/desktop profile checklist remains in `docs/TESTING.md`.
 - Responsive workspace/engine pass: lint, typecheck, the 43-file / 202-test frontend suite, full 30-test Rust suite, production web build and macOS `KnightClub.app` bundle passed. The local Vite server responded successfully at `http://127.0.0.1:5173/`; the production entry is 348.29 kB / 108.20 kB gzip, with Review/Train/Insights emitted as independent async chunks.
 - Workspace handoff: focused 5-file / 27-test suite and full 35-file / 155-test frontend suite passed, along with lint, typecheck, web build, 23 Rust tests and the macOS Tauri bundle. In-app browser verification observed Play at `scrollY = 550` changing to Review at `scrollY = 0`, with the Review title focused and 37 px from the viewport top; activating Review again at `scrollY = 300` preserved `scrollY = 300`. A dedicated packaged-desktop UX walkthrough remains pending.
