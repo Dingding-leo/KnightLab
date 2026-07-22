@@ -36,6 +36,8 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 
 **Latest mobile Review-navigation evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 50 files / 247 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests. The Review markup contract proves the labelled **Jump to move** control offers Start plus SAN positions and follows board navigation in source order, before transfer controls, while the complete labelled move list remains in the analysis panel. This is deterministic/markup evidence; a manual narrow browser and packaged-desktop walkthrough remains release handoff work.
 
+**Latest Play preview-navigation evidence (2026-07-23):** lint and typecheck passed; `npm test` passed with 51 files / 251 tests; `cargo test --manifest-path src-tauri/Cargo.toml` passed with 36 tests. Pure state contracts prove Previous holds at the earliest historical move, Next reaches live only at the newest move, invalid values fail closed and a bot-appended move keeps the selected preview inspectable. Presentation contracts retain the labelled Historical position navigation group, Previous, Next, current move count and Return to live. This is deterministic/markup evidence; a manual Play and narrow packaged-desktop walkthrough remains release handoff work.
+
 ## Workspace-navigation user check
 
 1. In **Play**, scroll the page to a measurable non-zero position (for example, 550 px), then select **Review**. Confirm the page starts at the top and the current workspace heading receives focus without being scrolled away.
@@ -181,6 +183,13 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 3. Open **Position tools** while previewing and copy/download FEN. Confirm the artifact matches the displayed historical board and the controls say **displayed** position/FEN; return live and confirm they again use the newest live board and current-position labels.
 4. Let a bot move arrive while viewing an earlier ply. Confirm the preview stays on the selected move and the move list does not auto-scroll; return live and confirm the newly appended move and current board appear.
 5. Repeat from a non-standard FEN start and after opening a saved game. Replacing/restarting/hydrating a game must return the view to live rather than reuse an old preview ply.
+
+## Play historical-preview navigation check
+
+1. In a game with at least four plies, select an earlier SAN move in **Moves**. Confirm the read-only board exposes **Previous**, **Next**, its move count and **Return to live** directly above the board.
+2. At the earliest previewable move, **Previous** must be disabled. Use **Next** across the remaining moves: the board and last-move highlight must advance one ply at a time, and only the newest move may return to the live board.
+3. While inspecting an earlier ply during a bot turn, let the bot reply. Confirm the displayed historical board does not jump; use **Next** to reach the prior latest move, then the appended reply, and only then live play.
+4. At 320, 375 and 430 px widths, confirm the three preview actions remain fully labelled, have 44 px touch targets, do not introduce horizontal overflow and do not enable board movement, Undo, draw or resign while previewing.
 
 ## Play-flow regression check
 

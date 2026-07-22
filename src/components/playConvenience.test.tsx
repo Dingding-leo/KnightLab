@@ -5,6 +5,7 @@ import { ChessBoard } from './ChessBoard'
 import { MoveList } from './MoveList'
 import { GameDecisionDialog } from './GameDecisionDialog'
 import { EngineSettingsPanel } from './EngineSettingsPanel'
+import { PlayPreviewNavigation } from './PlayPreviewNavigation'
 import { DEFAULT_ENGINE_SETTINGS } from '../engine/engineSettings'
 
 describe('board convenience contracts', () => {
@@ -93,6 +94,27 @@ describe('move history convenience contracts', () => {
     expect(markup).toContain('aria-label="View position after 1... e5"')
     expect(markup).toContain('aria-label="View position after 2. Nf3"')
     expect(markup).toContain('Nf3')
+  })
+})
+
+describe('historical Play preview convenience contracts', () => {
+  it('keeps step controls labelled and exposes a clear return to the live board', () => {
+    const markup = renderToStaticMarkup(
+      <PlayPreviewNavigation
+        ply={2}
+        maxPly={5}
+        onPrevious={vi.fn()}
+        onNext={vi.fn()}
+        onReturnToLive={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('role="group"')
+    expect(markup).toContain('aria-label="Historical position navigation"')
+    expect(markup).toContain('>Previous<')
+    expect(markup).toContain('Move 2 of 5')
+    expect(markup).toContain('>Next<')
+    expect(markup).toContain('Return to live')
   })
 })
 

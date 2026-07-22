@@ -38,6 +38,7 @@ import { EngineSettingsPanel, type EngineStatus } from './components/EngineSetti
 import { GameDecisionDialog, type GameDecision } from './components/GameDecisionDialog'
 import { ChessPiece } from './components/ChessPiece'
 import { MoveList } from './components/MoveList'
+import { PlayPreviewNavigation } from './components/PlayPreviewNavigation'
 import type { TacticsSprintResult } from './components/TacticsSprint'
 import {
   cloneGame,
@@ -100,6 +101,7 @@ import { GameSoundPlayer, type GameSoundEvent } from './audio/gameSounds'
 import { gameShortcutFor } from './domain/shortcuts'
 import { copyText, downloadText } from './domain/textTransfer'
 import { positionTransferFor } from './domain/positionTransfer'
+import { previewPlyAfter, type PlayPreviewNavigation as PlayPreviewNavigationAction } from './domain/playPreview'
 import { handoffWorkspace } from './domain/workspaceNavigation'
 import { terminalSessionFingerprint } from './domain/libraryIdentity'
 import { HybridEngineClient, isTauriRuntime, type EngineSearchResult } from './engine/stockfishClient'
@@ -583,6 +585,13 @@ export default function App() {
   const returnToLive = useCallback(() => {
     setPreviewPly(null)
   }, [])
+
+  const stepPreview = useCallback((action: PlayPreviewNavigationAction) => {
+    if (previewPly === null) return
+    setSelected(null)
+    setPromotion(null)
+    setPreviewPly(previewPlyAfter(action, previewPly, verbose.length))
+  }, [previewPly, verbose.length])
 
   const reportTransfer = (ok: boolean, success: string, failure: string) => {
     setTransferNotice({ kind: ok ? 'success' : 'error', message: ok ? success : failure })
@@ -1694,12 +1703,20 @@ export default function App() {
                   <strong>Material {formatEvaluation(evaluateMaterial(previewGame, 'w'))}</strong>
                 </div>
                 <div className="board-status__actions">
-                  {previewing && <button className="board-return-live" type="button" onClick={returnToLive}>Return to live</button>}
                   <button className="icon-button" type="button" onClick={() => setOrientation(orientation === 'white' ? 'black' : 'white')} title="Flip board">
                     <FlipHorizontal2 size={18} /><span>Flip</span>
                   </button>
                 </div>
               </div>
+              {previewing && previewPly !== null && (
+                <PlayPreviewNavigation
+                  ply={previewPly}
+                  maxPly={history.length}
+                  onPrevious={() => stepPreview('previous')}
+                  onNext={() => stepPreview('next')}
+                  onReturnToLive={returnToLive}
+                />
+              )}
               {premove && !previewing && (
                 <div className="premove-status" role="status">
                   <span><RefreshCw size={14} aria-hidden="true" />Premove queued <strong>{premove.from} → {premove.to}</strong></span>

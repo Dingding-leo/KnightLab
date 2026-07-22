@@ -123,6 +123,7 @@
 - At phone widths, Play groups the five game actions into readable two-row controls with 44 px touch targets while preserving their action and Tab order
 - At phone widths, Review now keeps a labelled 44 px **Jump to move** picker directly below board navigation, so players can return to any PGN position without scrolling past analysis output; the full classified notation list remains available in the panel
 - Play notation now supports a non-destructive, read-only historical board preview with clickable SAN moves and an explicit Return to live action; live clocks, the bot, persistence and queued premoves remain authoritative underneath it
+- Historical Play previews now include an explicit Previous/Next replay bar beside Return to live; it stays at the user-selected ply while a bot reply arrives and reaches live only after the newest move
 - FEN copy/download now exports the exact displayed historical position during notation preview, rather than silently exporting a newer live board
 - Review-to-Train actions now identify which practice route is preparing, announce the local queue work, and disable both routes until the existing serial save path settles
 - Clipboard transfers now use a local fallback/error path when the platform Clipboard API is unavailable or denied
@@ -130,6 +131,7 @@
 
 ### Verification
 
+- Play preview navigation: lint, typecheck, the 51-file / 251-test frontend suite and full 36-test Rust suite passed. Pure preview-state contracts cover first/latest bounds, invalid input and a bot-appended history; presentation contracts retain named Previous, Next and Return to live controls. Production web and macOS bundle checks remain recorded below; a manual Play replay walkthrough remains release handoff work.
 - Mobile Review navigation: lint, typecheck, the 50-file / 247-test frontend suite and full 36-test Rust suite passed. The Review contract fixes the picker’s labelled Start/SAN options and source order immediately after board navigation while retaining the full labelled notation list. Production web and macOS bundle checks remain recorded below; a manual phone-width browser/desktop walkthrough remains release handoff work.
 - Displayed-FEN follow-up: lint, typecheck, the 50-file / 247-test frontend suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Preview status now explicitly discloses that the live clock continues, and Position tools use the displayed board FEN with preview-specific labels. A manual preview-copy browser/desktop check remains release handoff work.
 - Notation-preview and practice-handoff pass: lint, typecheck, the 50-file / 246-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Prefix-replay tests preserve custom FEN histories without mutating the live game; move-list contracts cover button semantics/current selection; retry contracts preserve ordered partial-save behavior while the UI exposes preparation status. Manual browser/packaged-desktop preview and narrow-window checks remain release handoff work.
