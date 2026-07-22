@@ -20,13 +20,35 @@ const pieceValues: Record<PieceSymbol, number> = {
   k: 0,
 }
 
+/**
+ * chess.js intentionally exposes no public clone method. Modern browser and
+ * desktop runtimes can still deep-copy its plain instance state with the
+ * platform snapshot primitive; restoring the prototype preserves the complete
+ * undo/repetition/PGN history without replaying every earlier move. A public
+ * FEN check keeps the established replay path as the safe fallback.
+ */
+function snapshotGame(game: Chess): Chess | null {
+  if (typeof globalThis.structuredClone !== 'function') return null
+  try {
+    const cloned = Object.assign(
+      Object.create(Object.getPrototypeOf(game)),
+      globalThis.structuredClone(game),
+    ) as Chess
+    return cloned.fen() === game.fen() ? cloned : null
+  } catch {
+    return null
+  }
+}
+
 export function cloneGame(
   game: Chess,
   startFen = STANDARD_START_FEN,
-  verboseHistory: readonly Move[] = game.history({ verbose: true }),
+  verboseHistory?: readonly Move[],
 ): Chess {
+  const snapshot = snapshotGame(game)
+  if (snapshot) return snapshot
   const clone = new Chess(startFen)
-  for (const move of verboseHistory) {
+  for (const move of verboseHistory ?? game.history({ verbose: true })) {
     clone.move({ from: move.from, to: move.to, promotion: move.promotion })
   }
   return clone
@@ -38,14 +60,19 @@ export function cloneGame(
  * repeatedly asking chess.js to derive the same timeline.
  */
 export function cloneGameAtPly(
-  game: Chess,
   startFen: string,
   verboseHistory: readonly Move[],
   ply: number,
 ): Chess {
   const requestedPly = Number.isFinite(ply) ? Math.trunc(ply) : 0
   const boundedPly = Math.max(0, Math.min(verboseHistory.length, requestedPly))
-  return cloneGame(game, startFen, verboseHistory.slice(0, boundedPly))
+  // A historical preview intentionally represents only a prefix, so it must
+  // use the replay path rather than the complete live-game snapshot.
+  const clone = new Chess(startFen)
+  for (const move of verboseHistory.slice(0, boundedPly)) {
+    clone.move({ from: move.from, to: move.to, promotion: move.promotion })
+  }
+  return clone
 }
 
 export function evaluateMaterial(game: Chess, perspective: Color = 'w'): number {

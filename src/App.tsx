@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js'
+import { Chess, type Color, type Move, type PieceSymbol, type Square } from 'chess.js'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import {
   BarChart3,
@@ -90,11 +90,11 @@ import {
   type HumanColorChoice,
 } from './domain/playerSide'
 import {
+  applyPremoveToOwnedGame,
   canQueuePremove,
   premoveNeedsPromotion,
   queueablePremoveTargets,
   queuePremove,
-  tryApplyPremove,
   type QueuedPremove,
 } from './domain/premove'
 import { GameSoundPlayer, type GameSoundEvent } from './audio/gameSounds'
@@ -390,7 +390,7 @@ export default function App() {
   const desktop = useMemo(() => isTauriRuntime(), [])
   const database = useMemo(() => desktop ? new DatabaseClient() : null, [desktop])
   const [tab, setTab] = useState<Tab>('play')
-  const [game, setGame] = useState(initial.game)
+  const [game, setGameState] = useState(initial.game)
   const [startFen, setStartFen] = useState(initial.startFen)
   const [mode, setMode] = useState<GameMode>(initial.mode)
   const [botLevel, setBotLevel] = useState<BotLevel>(initial.botLevel)
@@ -443,6 +443,7 @@ export default function App() {
   const [engineName, setEngineName] = useState(desktop ? 'Stockfish' : 'Stockfish 18 Lite')
   const [engineDetail, setEngineDetail] = useState(desktop ? 'Native UCI engine · on demand' : 'WebAssembly · on demand')
   const botClient = useRef<HybridEngineClient | null>(null)
+  const verboseHistoryCache = useRef(new WeakMap<Chess, readonly Move[]>())
   const soundPlayer = useRef<GameSoundPlayer | null>(null)
   const clockNowRef = useRef(Date.now())
   const workspaceTitle = useRef<HTMLHeadingElement | null>(null)
@@ -488,11 +489,21 @@ export default function App() {
     initial.game.isGameOver() || Boolean(initial.termination),
   ))
 
-  const verbose = useMemo(() => game.history({ verbose: true }), [game])
+  const setGame = useCallback((next: Chess, knownVerbose?: readonly Move[]) => {
+    verboseHistoryCache.current.set(next, knownVerbose ?? next.history({ verbose: true }))
+    setGameState(next)
+  }, [])
+  const verbose = useMemo(() => {
+    const cached = verboseHistoryCache.current.get(game)
+    if (cached) return cached
+    const next = game.history({ verbose: true })
+    verboseHistoryCache.current.set(game, next)
+    return next
+  }, [game])
   const history = useMemo(() => verbose.map((move) => move.san), [verbose])
   const previewing = previewPly !== null
   const previewGame = useMemo(
-    () => previewPly === null ? game : cloneGameAtPly(game, startFen, verbose, previewPly),
+    () => previewPly === null ? game : cloneGameAtPly(startFen, verbose, previewPly),
     [game, previewPly, startFen, verbose],
   )
   const positionTransfer = useMemo(
@@ -545,8 +556,8 @@ export default function App() {
       return new Set<Square>(legalMovesFrom(game, selected).map((move) => move.to))
     }
     // These are shape-only premove previews, not a promise that the move will
-    // remain legal after the bot's pending reply. `tryApplyPremove` still asks
-    // chess.js to validate the actual resulting position.
+    // remain legal after the bot's pending reply. The owned bot-reply copy
+    // still asks chess.js to validate the actual resulting position.
     if (premoveWindow) return new Set<Square>(queueablePremoveTargets(game, humanColor, selected))
     return new Set<Square>()
   }, [game, humanColor, mode, premoveWindow, selected])
@@ -1092,13 +1103,14 @@ export default function App() {
   const commit = (move: MoveInput) => {
     if (gameFinished || !clock.activeColor || !isHumanTurn(mode, game.turn(), humanColor)) return
     const next = cloneGame(game, startFen, verbose)
-    try { next.move(move) } catch { setNotice('Illegal move.'); return }
+    let applied: Move
+    try { applied = next.move(move) } catch { setNotice('Illegal move.'); return }
     const now = Date.now()
     try {
       setClockHistory((items) => [...items, settleClock(clock, now)])
       setClock(completeClockMove(clock, game.turn(), now))
       captureClockNow(now)
-      clearPremove(); setGame(next); setSelected(null); setPromotion(null); setNotice('')
+      clearPremove(); setGame(next, [...verbose, applied]); setSelected(null); setPromotion(null); setNotice('')
       playMoveSound(next)
     } catch { setNotice('Time expired before that move completed.') }
   }
@@ -1202,8 +1214,8 @@ export default function App() {
     clearPremove(); setThinking(false)
     const next = cloneGame(game, startFen, verbose)
     if (!next.undo()) return
-    if (next.history().length && shouldUndoBotReply(mode, next.turn(), humanColor)) next.undo()
-    const targetPly = next.history().length
+    let targetPly = Math.max(0, verbose.length - 1)
+    if (targetPly && shouldUndoBotReply(mode, next.turn(), humanColor) && next.undo()) targetPly -= 1
     const restored = clockHistory[targetPly]
     if (restored) {
       setClock({
@@ -1216,7 +1228,7 @@ export default function App() {
       setClock(newClock(timeControl, next.turn()))
     }
     setClockHistory((items) => items.slice(0, targetPly))
-    setTermination(null); setDecision(null); setGame(next); setSelected(null); setPromotion(null)
+    setTermination(null); setDecision(null); setGame(next, verbose.slice(0, targetPly)); setSelected(null); setPromotion(null)
     savedPosition.current = null; setNotice('Move and clock restored.')
   }
 
@@ -1459,7 +1471,7 @@ export default function App() {
       }
     })()
     return () => { cancelled = true }
-  }, [database, reportDatabaseError])
+  }, [database, reportDatabaseError, setGame])
 
   useEffect(() => {
     if (tab !== 'library' && tab !== 'insights') return
@@ -1617,7 +1629,7 @@ export default function App() {
       let next = cloneGame(game, startFen, verbose)
       try {
         const now = Date.now()
-        next.move(chosen.move)
+        const nextVerbose = [...verbose, next.move(chosen.move)]
         const beforeBotClock = settleClock(clock, now)
         const afterBotClock = completeClockMove(clock, botColor, now)
         const queuedPremove = premoveRef.current
@@ -1626,9 +1638,9 @@ export default function App() {
         let nextClock = afterBotClock
         const historySnapshots = [beforeBotClock]
         if (queuedPremove?.baseFen === requestFen && !next.isGameOver() && next.turn() === humanColor) {
-          const afterPremove = tryApplyPremove(next, humanColor, queuedPremove)
+          const afterPremove = applyPremoveToOwnedGame(next, humanColor, queuedPremove)
           if (afterPremove) {
-            next = afterPremove
+            nextVerbose.push(afterPremove)
             historySnapshots.push(settleClock(afterBotClock, now))
             nextClock = completeClockMove(afterBotClock, humanColor, now)
           } else {
@@ -1638,7 +1650,7 @@ export default function App() {
         setClockHistory((items) => [...items, ...historySnapshots])
         setClock(nextClock)
         captureClockNow(now)
-        setGame(next); setSelected(null); setPromotion(null)
+        setGame(next, nextVerbose); setSelected(null); setPromotion(null)
         if (result.provider === 'opening-cue') {
           setNotice(`${botProfile.name}: ${botOpeningReaction(botProfile, next)}`)
         } else if (chosen.usedStyle) {
@@ -1671,7 +1683,7 @@ export default function App() {
         release?.()
       }
     }
-  }, [game, mode, humanColor, botColor, botLevel, botProfile, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound, captureClockNow, verbose])
+  }, [game, mode, humanColor, botColor, botLevel, botProfile, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound, captureClockNow, setGame, verbose])
 
   const abortedGameCount = useMemo(() => library.filter((item) => item.moveCount === 0).length, [library])
   const visibleLibrary = useMemo(() => {

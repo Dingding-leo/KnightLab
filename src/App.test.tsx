@@ -196,7 +196,7 @@ describe('local transfer convenience contracts', () => {
     const game = new Chess()
     game.move('e4')
     game.move('e5')
-    const preview = cloneGameAtPly(game, new Chess().fen(), game.history({ verbose: true }), 1)
+    const preview = cloneGameAtPly(new Chess().fen(), game.history({ verbose: true }), 1)
 
     const displayed = positionTransferFor(preview, true)
     const live = positionTransferFor(game, false)

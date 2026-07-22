@@ -1,4 +1,4 @@
-import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js'
+import { Chess, type Color, type Move, type PieceSymbol, type Square } from 'chess.js'
 import { cloneGame, STANDARD_START_FEN, type MoveInput } from './chess'
 
 export interface QueuedPremove extends MoveInput {
@@ -108,9 +108,18 @@ export function tryApplyPremove(game: Chess, humanColor: Color, move: MoveInput)
   // so its returned instance must retain prior PGN, repetition and undo
   // history. chess.js includes FEN in headers for non-standard starts.
   const next = cloneGame(game, game.getHeaders().FEN ?? STANDARD_START_FEN)
+  return applyPremoveToOwnedGame(next, humanColor, move) ? next : null
+}
+
+/**
+ * Applies a queued premove directly only when the caller exclusively owns the
+ * supplied game instance. Play uses this after it has already made its bot
+ * reply copy, avoiding a second full-history clone on the same turn.
+ */
+export function applyPremoveToOwnedGame(game: Chess, humanColor: Color, move: MoveInput): Move | null {
+  if (game.turn() !== humanColor) return null
   try {
-    next.move(move)
-    return next
+    return game.move(move)
   } catch {
     return null
   }

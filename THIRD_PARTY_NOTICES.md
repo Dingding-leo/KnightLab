@@ -40,7 +40,7 @@
 
 ## Build and test dependencies
 
-Vite, TypeScript, Vitest, Oxlint and vite-plugin-pwa retain their respective upstream licences. The alpha currently resolves exact package versions from `package.json`; a generated lockfile should be committed before reproducible desktop releases begin.
+Vite, TypeScript, Vitest, Oxlint and vite-plugin-pwa retain their respective upstream licences. Exact JavaScript and Rust dependency resolutions are committed in `package-lock.json` and `src-tauri/Cargo.lock` for reproducible builds.
 
 ## Stockfish integration
 

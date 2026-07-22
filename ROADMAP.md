@@ -1,6 +1,6 @@
 # KnightClub delivery roadmap
 
-## Phase 0 — Foundation (complete in 0.1)
+## Phase 0 — Foundation (complete in 0.2.0)
 
 - [x] Original visual system and responsive application shell
 - [x] Legal standard-chess board

@@ -33,6 +33,7 @@ import {
   type AnalysisResponse,
   type AnalysisSettings,
 } from '../analysis/stockfishAnalysisClient'
+import { AmbientAnalysisCache } from '../analysis/ambientAnalysisCache'
 import { disposeAndClearClient } from '../analysis/clientLifecycle'
 import { readAnalysisFile } from '../analysis/fileImport'
 import { createLatestRequestGate } from '../analysis/latestRequest'
@@ -92,6 +93,7 @@ interface DisplayLine extends AnalysisLine {
 
 interface DisplayAnalysis extends AnalysisResponse {
   lines: DisplayLine[]
+  cached: boolean
 }
 
 interface AnalysisMoveRow {
@@ -201,6 +203,17 @@ function compactNumber(value: number | null): string {
 
 function lineLabel(index: number): string {
   return index === 0 ? 'Best' : `Line ${index + 1}`
+}
+
+function displayAnalysis(response: AnalysisResponse, cached: boolean): DisplayAnalysis {
+  return {
+    ...response,
+    cached,
+    lines: response.lines.map((line) => ({
+      ...line,
+      san: uciPvToSan(response.fen, line.pv),
+    })),
+  }
 }
 
 const classificationLabels: Record<MoveClassification, string> = {
@@ -333,6 +346,7 @@ export function AnalysisWorkspace({
   const [retrySavingAction, setRetrySavingAction] = useState<RetrySaveAction | null>(null)
   const [retryError, setRetryError] = useState('')
   const client = useRef<StockfishAnalysisClient | null>(null)
+  const ambientAnalysisCache = useRef(new AmbientAnalysisCache())
   const reviewClient = useRef<StockfishAnalysisClient | null>(null)
   const reviewAbort = useRef<AbortController | null>(null)
   const reviewLoadVersion = useRef(0)
@@ -429,8 +443,6 @@ export function AnalysisWorkspace({
       return
     }
 
-    client.current ??= new StockfishAnalysisClient()
-    const analysisClient = client.current
     const selectedEffort = effortOptions[effort]
     const settings: AnalysisSettings = {
       moveTimeMs: selectedEffort.moveTimeMs,
@@ -440,6 +452,28 @@ export function AnalysisWorkspace({
       threads: engineThreads,
       hashMb: engineHashMb,
     }
+    const request = {
+      backend: desktop ? 'desktop' as const : 'browser' as const,
+      enginePath,
+      fen: position.fen,
+      settings,
+    }
+    const cached = ambientAnalysisCache.current.get(request)
+    if (cached) {
+      try {
+        setAnalysis(displayAnalysis(cached, true))
+        setAnalysisError('')
+      } catch (error) {
+        setAnalysis(null)
+        setAnalysisError(error instanceof Error ? error.message : 'Cached Stockfish analysis could not be displayed.')
+      }
+      setLoading(false)
+      return
+    }
+
+    client.current ??= new StockfishAnalysisClient()
+    const analysisClient = client.current
+    let active = true
 
     setLoading(true)
     setAnalysis(null)
@@ -447,14 +481,15 @@ export function AnalysisWorkspace({
     const timer = window.setTimeout(() => {
       void analysisClient.analyze(position.fen, enginePath, settings)
         .then((response) => {
-          const lines = response.lines.map((line) => ({
-            ...line,
-            san: uciPvToSan(position.fen, line.pv),
-          }))
-          setAnalysis({ ...response, lines })
+          if (!active) return
+          const next = displayAnalysis(response, false)
+          ambientAnalysisCache.current.set(request, response)
+          if (!active) return
+          setAnalysis(next)
           setLoading(false)
         })
         .catch((error: unknown) => {
+          if (!active) return
           if (error instanceof Error && error.name === 'AbortError') return
           setAnalysisError(error instanceof Error ? error.message : 'Stockfish analysis failed.')
           setLoading(false)
@@ -462,10 +497,11 @@ export function AnalysisWorkspace({
     }, 140)
 
     return () => {
+      active = false
       window.clearTimeout(timer)
       analysisClient.cancel()
     }
-  }, [effort, enabled, engineBusy, engineHashMb, enginePath, engineThreads, multiPv, position.fen, positionTerminal, reviewRunning])
+  }, [desktop, effort, enabled, engineBusy, engineHashMb, enginePath, engineThreads, multiPv, position.fen, positionTerminal, reviewRunning])
 
   useEffect(() => {
     const importGate = fileImportGate.current
@@ -1059,7 +1095,7 @@ export function AnalysisWorkspace({
                 </article>
               )
             })}
-            <footer><BarChart3 size={14} />{analysis.engineName} · {analysis.elapsedMs} ms · {engineThreads} thread{engineThreads === 1 ? '' : 's'} · {engineHashMb} MB hash</footer>
+            <footer><BarChart3 size={14} />{analysis.engineName} · {analysis.cached ? `cached local result · ${analysis.elapsedMs} ms original` : `${analysis.elapsedMs} ms`} · {engineThreads} thread{engineThreads === 1 ? '' : 's'} · {engineHashMb} MB hash</footer>
           </div>
         ) : (
           <div className="analysis-empty" role="status"><Gauge size={28} /><strong>No legal continuation</strong><span>This may be a checkmate, stalemate or other terminal position.</span></div>

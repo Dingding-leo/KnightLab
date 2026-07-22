@@ -77,6 +77,9 @@
 
 ### Changed
 
+- The KnightClub GitHub repository is now canonically `Dingding-leo/KnightClub`, matching the local package, desktop bundle and published metadata
+- Revisiting an exact interactive Review position now returns a clearly labelled bounded local cache result instead of launching another Stockfish search; cache identity includes runtime, configured path, FEN and normalized settings, and full-game review remains uncached
+- Play now carries known verbose moves through human, bot and premove commits, uses a verified platform game-state snapshot for full current-position copies and retains start-FEN replay only as the safe fallback; historical previews still rebuild their requested prefix
 - Play, player bars, session status and Library now identify the selected named opponent instead of exposing a generic `balanced` technical label; Custom UCI settings explicitly disclose that they override the profile's default strength
 - Review, Train and Insights are now independently loaded local workspaces with hover/focus prefetch, stable loading feedback and a scoped reload recovery instead of adding their code to the initial Play bundle
 - Browser and desktop Stockfish runtimes now reuse only acknowledged unchanged UCI option blocks while retaining `isready` fences, preventing repeated Hash/option churn during continuous play and full-game review
@@ -139,6 +142,7 @@
 
 ### Verification
 
+- Low-compute Review and Play snapshot pass: lint, typecheck, the 54-file / 265-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. A deterministic 40/80/120/200-ply local `chess.js` benchmark measured replay at 1.200/1.948/2.962/4.837 ms per copy versus the verified platform snapshot at 0.056/0.096/0.142/0.221 ms; ambient-cache contracts cover normalized exact identity, LRU eviction and response isolation. Manual Play/Review walkthrough remains release handoff work.
 - Review context and Play engine truthfulness: lint, typecheck, the 52-file / 255-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Review contracts retain explicit selected-SAN navigation text and accessible full context; pure Play status contracts prove real Stockfish becomes ready from the returned identity, authored opening cues stay unverified, and fallback/malformed/failure paths cannot retain a false ready badge. Manual Review/engine-status walkthrough remains release handoff work.
 - Phone Play notation targets: lint, typecheck, the 51-file / 252-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. Existing MoveList contracts retain labelled white/black SAN controls and the current-position state; narrow CSS raises their targets from 24 px to 44 px without changing move selection, scrolling or live-follow behavior. Manual phone notation replay remains release handoff work.
 - Phone Review replay controls: lint, typecheck, the 51-file / 252-test frontend suite, full 36-test Rust suite, production web build, local HTTP check and macOS `KnightClub.app` bundle passed. The Review contract retains labelled first/previous/next/last controls; narrow CSS reserves four 44 px arrow columns without altering the timeline, keyboard navigation, engine or persistence paths. Manual narrow-window replay remains release handoff work.

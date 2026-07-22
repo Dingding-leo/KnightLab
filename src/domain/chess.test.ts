@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Chess } from 'chess.js'
 import { cloneGame, cloneGameAtPly, evaluateMaterial, gameResult, gameStatus } from './chess'
 
@@ -26,6 +26,22 @@ describe('chess domain', () => {
     expect(fromSnapshot.pgn()).toBe(fallback.pgn())
   })
 
+  it('uses an independent native snapshot for a current game without replaying every move', () => {
+    const game = new Chess()
+    for (const move of ['e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4', 'Nf6', 'Nc3', 'a6']) {
+      game.move(move)
+    }
+    const moveSpy = vi.spyOn(Chess.prototype, 'move')
+
+    const clone = cloneGame(game)
+
+    expect(moveSpy).not.toHaveBeenCalled()
+    clone.move('Be2')
+    expect(clone.history()).toEqual([...game.history(), 'Be2'])
+    expect(game.history()).not.toContain('Be2')
+    moveSpy.mockRestore()
+  })
+
   it('rebuilds a bounded historical position from cached moves without changing a custom-start game', () => {
     const startFen = '4k3/8/8/8/8/8/8/4K3 w - - 0 1'
     const game = new Chess(startFen)
@@ -33,13 +49,13 @@ describe('chess domain', () => {
     game.move('Kd7')
     const verbose = game.history({ verbose: true })
 
-    const preview = cloneGameAtPly(game, startFen, verbose, 1)
+    const preview = cloneGameAtPly(startFen, verbose, 1)
 
     expect(preview.history()).toEqual(['Kd2'])
     expect(preview.fen()).toBe('4k3/8/8/8/8/8/3K4/8 b - - 1 1')
     expect(game.history()).toEqual(['Kd2', 'Kd7'])
-    expect(cloneGameAtPly(game, startFen, verbose, -1).fen()).toBe(startFen)
-    expect(cloneGameAtPly(game, startFen, verbose, 99).history()).toEqual(game.history())
+    expect(cloneGameAtPly(startFen, verbose, -1).fen()).toBe(startFen)
+    expect(cloneGameAtPly(startFen, verbose, 99).history()).toEqual(game.history())
   })
 
   it('evaluates captured material from white perspective', () => {

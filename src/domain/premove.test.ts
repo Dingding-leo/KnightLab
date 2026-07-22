@@ -2,6 +2,7 @@ import { Chess } from 'chess.js'
 import { describe, expect, it } from 'vitest'
 import {
   canQueuePremove,
+  applyPremoveToOwnedGame,
   premoveNeedsPromotion,
   queueablePremoveTargets,
   queuePremove,
@@ -9,6 +10,17 @@ import {
 } from './premove'
 
 describe('premove queue preview', () => {
+  it('applies a legal premove directly to a caller-owned reply position', () => {
+    const game = new Chess()
+    game.move('e4')
+    game.move('e5')
+
+    const applied = applyPremoveToOwnedGame(game, 'w', { from: 'g1', to: 'f3' })
+
+    expect(applied?.san).toBe('Nf3')
+    expect(game.history()).toEqual(['e4', 'e5', 'Nf3'])
+  })
+
   it('accepts plausible human-piece geometry while rejecting opponent pieces and own targets', () => {
     const game = new Chess()
     game.move('e4')
