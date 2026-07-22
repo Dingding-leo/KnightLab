@@ -17,6 +17,7 @@
 - Full-game Review now waits for a local saved-report lookup before it enables a costly rerun, and labels an intentional rerun clearly
 - Promotion dialogs now block Play shortcuts behind the modal while preserving Escape-to-cancel
 - Promotion choices now focus Queen when available and accept Q/R/B/N direct keyboard selection with explicit accessible key hints
+- Play now supports safe unmodified Left/Right history stepping outside the board grid, inputs and dialogs
 - Cancellable full-game Stockfish review with intermediate-position reuse, live ply progress and a safe Stop action
 - Full-game review now avoids duplicate Stockfish work by reusing each intermediate post-move MultiPV result for the next move's baseline while retaining a single-PV final after check and rules-layer terminal handling
 - Decision dialogs now block Play shortcuts behind the modal while preserving Escape-to-cancel

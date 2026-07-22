@@ -19,7 +19,7 @@ export function PlayPreviewNavigation({
   onReturnToLive,
 }: PlayPreviewNavigationProps) {
   return (
-    <div className="play-preview-navigation" role="group" aria-label="Historical position navigation">
+    <div className="play-preview-navigation" role="group" aria-label="Historical position navigation" title="Use Left and Right Arrow keys to step through history.">
       <button className="play-preview-navigation__step" type="button" onClick={onPrevious} disabled={ply <= 1}>
         <ChevronLeft size={16} aria-hidden="true" /><span>Previous</span>
       </button>

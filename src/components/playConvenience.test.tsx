@@ -115,6 +115,7 @@ describe('historical Play preview convenience contracts', () => {
 
     expect(markup).toContain('role="group"')
     expect(markup).toContain('aria-label="Historical position navigation"')
+    expect(markup).toContain('title="Use Left and Right Arrow keys to step through history."')
     expect(markup).toContain('>Previous<')
     expect(markup).toContain('Move 2 of 5')
     expect(markup).toContain('>Next<')

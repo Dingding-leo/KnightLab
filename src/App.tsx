@@ -101,7 +101,12 @@ import { GameSoundPlayer, type GameSoundEvent } from './audio/gameSounds'
 import { gameShortcutFor, promotionShortcutFor } from './domain/shortcuts'
 import { copyText, downloadText } from './domain/textTransfer'
 import { positionTransferFor } from './domain/positionTransfer'
-import { previewPlyAfter, type PlayPreviewNavigation as PlayPreviewNavigationAction } from './domain/playPreview'
+import {
+  playPreviewNavigationForKey,
+  previewPlyAfter,
+  previewPlyAfterShortcut,
+  type PlayPreviewNavigation as PlayPreviewNavigationAction,
+} from './domain/playPreview'
 import { handoffWorkspace } from './domain/workspaceNavigation'
 import { terminalSessionFingerprint } from './domain/libraryIdentity'
 import { HybridEngineClient, isTauriRuntime, type EngineSearchResult } from './engine/stockfishClient'
@@ -1420,12 +1425,33 @@ export default function App() {
         return
       }
     }
+    if (event.defaultPrevented || event.isComposing) return
     if (tab !== 'play') return
     const element = event.target instanceof HTMLElement ? event.target : null
     const editable = Boolean(
       element?.isContentEditable
       || (element && ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)),
     )
+    const previewNavigation = playPreviewNavigationForKey({
+      key: event.key,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      editable,
+      modalOpen: Boolean(decision || promotion),
+      boardGridFocused: Boolean(element?.closest('[role="grid"]')),
+    })
+    if (previewNavigation) {
+      const nextPreviewPly = previewPlyAfterShortcut(previewNavigation, previewPly, verbose.length)
+      if (nextPreviewPly !== previewPly) {
+        event.preventDefault()
+        setSelected(null)
+        setPromotion(null)
+        setPreviewPly(nextPreviewPly)
+      }
+      return
+    }
     const shortcut = gameShortcutFor({
       key: event.key,
       metaKey: event.metaKey,
