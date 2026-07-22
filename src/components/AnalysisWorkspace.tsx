@@ -9,7 +9,7 @@ import {
   type ChangeEvent,
   type MouseEvent,
 } from 'react'
-import { Chess } from 'chess.js'
+import { Chess, type PieceSymbol, type Square } from 'chess.js'
 import {
   BarChart3,
   ChevronFirst,
@@ -21,11 +21,14 @@ import {
   Download,
   FlipHorizontal2,
   Gauge,
+  GitBranch,
   Import,
   LoaderCircle,
   PlayCircle,
   RefreshCw,
+  RotateCcw,
   Sparkles,
+  Undo2,
 } from 'lucide-react'
 import {
   createFenTimeline,
@@ -48,7 +51,18 @@ import { disposeAndClearClient, disposeClientIfCurrent } from '../analysis/clien
 import { readAnalysisFile } from '../analysis/fileImport'
 import { createLatestRequestGate } from '../analysis/latestRequest'
 import { inertAnalysisBoardInteraction } from '../analysis/analysisBoardInteraction'
+import {
+  MAX_VARIATION_PLIES,
+  appendVariationMove,
+  createVariationState,
+  resetVariation,
+  undoVariationMove,
+  variationPgn,
+  type VariationPromotion,
+  type VariationState,
+} from '../analysis/variationLine'
 import { copyText, downloadText } from '../domain/textTransfer'
+import { legalMovesFrom } from '../domain/chess'
 import { runGameReview, type GameReview, type ReviewProgress } from '../review/gameReviewRunner'
 import { saveCompletedReviewInBackground } from '../review/backgroundReviewSave'
 import type { MoveClassification, ReviewedMove } from '../review/reviewModel'
@@ -90,6 +104,7 @@ import {
   type PersistedReview,
 } from '../review/reviewPersistence'
 import { ChessBoard } from './ChessBoard'
+import { ChessPiece } from './ChessPiece'
 
 interface AnalysisWorkspaceProps {
   desktop: boolean
@@ -222,6 +237,15 @@ const effortOptions = {
 } as const
 
 type Effort = keyof typeof effortOptions
+type PromotionPiece = Extract<PieceSymbol, 'q' | 'r' | 'b' | 'n'>
+type VariationPromotionChoice = { from: Square; to: Square; choices: PromotionPiece[] }
+
+const promotionNames: Partial<Record<PieceSymbol, string>> = {
+  q: 'Queen',
+  r: 'Rook',
+  b: 'Bishop',
+  n: 'Knight',
+}
 
 function compactNumber(value: number | null): string {
   if (value === null) return '—'
@@ -499,6 +523,9 @@ export function AnalysisWorkspace({
   const [timeline, setTimeline] = useState(initialWorkspace.timeline)
   const [ply, setPly] = useState(initialWorkspace.ply)
   const [orientation, setOrientation] = useState<'white' | 'black'>('white')
+  const [variation, setVariation] = useState<VariationState | null>(null)
+  const [selectedVariationSquare, setSelectedVariationSquare] = useState<Square | null>(null)
+  const [variationPromotion, setVariationPromotion] = useState<VariationPromotionChoice | null>(null)
   const [pgnInput, setPgnInput] = useState(currentPgn)
   const [fenInput, setFenInput] = useState('')
   const [importError, setImportError] = useState('')
@@ -533,9 +560,11 @@ export function AnalysisWorkspace({
   const mounted = useRef(true)
   const fileInput = useRef<HTMLInputElement | null>(null)
   const fileImportGate = useRef(createLatestRequestGate())
+  const promotionChoiceRef = useRef<HTMLButtonElement | null>(null)
 
   const position = timeline.positions[ply] ?? timeline.positions[0]
-  const boardGame = useMemo(() => new Chess(position.fen), [position.fen])
+  const displayedPosition = variation?.position ?? position
+  const boardGame = useMemo(() => new Chess(displayedPosition.fen), [displayedPosition.fen])
   const liveTimeline = useMemo(
     () => liveTimelineFor(currentPgn, timeline),
     [currentPgn, timeline],
@@ -545,6 +574,9 @@ export function AnalysisWorkspace({
     [liveTimeline, timeline],
   )
   const positionTerminal = boardGame.isGameOver()
+  const variationActive = variation !== null
+  const variationAtLimit = Boolean(variation && variation.line.moves.length >= MAX_VARIATION_PLIES)
+  const variationHasPgn = Boolean(variation?.line.moves.length)
   const engineThreads = desktop ? threads : 1
   const engineHashMb = desktop ? hashMb : Math.min(hashMb, 128)
   const maxPly = timeline.positions.length - 1
@@ -552,12 +584,16 @@ export function AnalysisWorkspace({
   const selectedNavigationMoveLabel = selectedNavigationMove
     ? `${selectedNavigationMove.moveNumber}${selectedNavigationMove.color === 'b' ? '…' : '.'} ${selectedNavigationMove.san}`
     : null
-  const navigationStatus = selectedNavigationMoveLabel
-    ? `${selectedNavigationMoveLabel} · ${ply}/${maxPly}`
-    : `Start position · 0/${maxPly}`
-  const navigationAriaLabel = selectedNavigationMoveLabel
-    ? `After ${selectedNavigationMoveLabel}, position ${ply} of ${maxPly}`
-    : `Start position, position 0 of ${maxPly}`
+  const navigationStatus = variation
+    ? `Temporary variation · ${variation.line.moves.length} ${variation.line.moves.length === 1 ? 'move' : 'moves'}`
+    : selectedNavigationMoveLabel
+      ? `${selectedNavigationMoveLabel} · ${ply}/${maxPly}`
+      : `Start position · 0/${maxPly}`
+  const navigationAriaLabel = variation
+    ? `Temporary variation with ${variation.line.moves.length} ${variation.line.moves.length === 1 ? 'move' : 'moves'} from main-game position ${variation.line.anchorPly}`
+    : selectedNavigationMoveLabel
+      ? `After ${selectedNavigationMoveLabel}, position ${ply} of ${maxPly}`
+      : `Start position, position 0 of ${maxPly}`
   const reviewKey = useMemo(
     () => timeline.source === 'pgn' && timeline.moves.length ? createReviewKey(timeline) : null,
     [timeline],
@@ -574,11 +610,15 @@ export function AnalysisWorkspace({
     reviewHydrating,
     hasReview: review !== null,
   })
-  const selectedReview = selectedReviewMoveAtPly(review, ply)
+  const selectedReview = variationActive ? null : selectedReviewMoveAtPly(review, ply)
   const coachGuidance = useMemo(() => {
     return buildCoachGuidanceFromTimeline(timeline, selectedReview)
   }, [selectedReview, timeline])
   const coachEvidenceSquares = useMemo(() => evidenceSquaresForGuidance(coachGuidance), [coachGuidance])
+  const variationTargets = useMemo(() => {
+    if (!variation || !selectedVariationSquare || variationPromotion || variationAtLimit) return new Set<Square>()
+    return new Set<Square>(legalMovesFrom(boardGame, selectedVariationSquare).map((move) => move.to))
+  }, [boardGame, selectedVariationSquare, variation, variationAtLimit, variationPromotion])
   const selectedRetryItem = useMemo(() => {
     if (!selectedReview || !reviewKey || !verifiedRetryTimeline) return null
     return createRetryItemFromVerifiedTimeline({
@@ -627,6 +667,119 @@ export function AnalysisWorkspace({
     return mounted.current && version === reviewRunVersion.current
   }
 
+  const clearVariationInteraction = useCallback(() => {
+    setVariation(null)
+    setSelectedVariationSquare(null)
+    setVariationPromotion(null)
+  }, [])
+
+  /** Any main-line navigation intentionally leaves a temporary branch behind. */
+  const selectMainlinePly = useCallback((nextPly: number) => {
+    const discardingMoves = Boolean(variation?.line.moves.length)
+    clearVariationInteraction()
+    setPly(Math.max(0, Math.min(maxPly, nextPly)))
+    if (discardingMoves) {
+      setImportError('')
+      setImportNotice('Returned to the main game. The temporary variation was not saved.')
+    }
+  }, [clearVariationInteraction, maxPly, variation])
+
+  const beginVariation = useCallback(() => {
+    if (new Chess(position.fen).isGameOver()) return
+    const next = createVariationState(position.fen, ply)
+    if (!next) {
+      setImportNotice('')
+      setImportError('This position could not be opened for a temporary variation.')
+      return
+    }
+    setVariation(next)
+    setSelectedVariationSquare(null)
+    setVariationPromotion(null)
+    setImportError('')
+    setImportNotice('Temporary variation started. Try any legal continuation; the main game stays unchanged.')
+  }, [ply, position.fen])
+
+  const commitVariationMove = useCallback((from: Square, to: Square, promotion?: VariationPromotion) => {
+    if (!variation) return
+    const next = appendVariationMove(variation, { from, to, promotion })
+    setSelectedVariationSquare(null)
+    setVariationPromotion(null)
+    if (!next) {
+      setImportNotice('')
+      setImportError('That move is not legal in this temporary variation.')
+      return
+    }
+    setVariation(next)
+    setImportError('')
+    setImportNotice(`Temporary variation: ${next.line.moves.at(-1)?.san ?? 'move added'}. Stockfish will evaluate this position locally.`)
+  }, [variation])
+
+  const attemptVariationMove = useCallback((from: Square, to: Square) => {
+    if (!variation || variationPromotion) return
+    const piece = boardGame.get(from)
+    if (!piece || piece.color !== boardGame.turn()) return
+    const candidates = legalMovesFrom(boardGame, from).filter((move) => move.to === to)
+    if (!candidates.length) {
+      setSelectedVariationSquare(null)
+      return
+    }
+    const choices = [...new Set(candidates.map((move) => move.promotion).filter(Boolean))] as PromotionPiece[]
+    if (choices.length) {
+      setVariationPromotion({ from, to, choices })
+      return
+    }
+    commitVariationMove(from, to)
+  }, [boardGame, commitVariationMove, variation, variationPromotion])
+
+  const selectVariationSquare = useCallback((square: Square) => {
+    if (!variation || variationPromotion) return
+    const piece = boardGame.get(square)
+    if (!selectedVariationSquare || piece?.color === boardGame.turn()) {
+      setSelectedVariationSquare(piece?.color === boardGame.turn() ? square : null)
+      return
+    }
+    attemptVariationMove(selectedVariationSquare, square)
+  }, [attemptVariationMove, boardGame, selectedVariationSquare, variation, variationPromotion])
+
+  const undoTemporaryVariation = useCallback(() => {
+    if (!variation) return
+    const next = undoVariationMove(variation)
+    setSelectedVariationSquare(null)
+    setVariationPromotion(null)
+    if (!next) {
+      setImportNotice('')
+      setImportError('This temporary variation could not be replayed.')
+      return
+    }
+    setVariation(next)
+    setImportError('')
+    setImportNotice(next.line.moves.length ? 'Last temporary move removed.' : 'Temporary variation reset to its source position.')
+  }, [variation])
+
+  const resetTemporaryVariation = useCallback(() => {
+    if (!variation) return
+    const next = resetVariation(variation)
+    setSelectedVariationSquare(null)
+    setVariationPromotion(null)
+    if (!next) {
+      setImportNotice('')
+      setImportError('This temporary variation could not be reset.')
+      return
+    }
+    setVariation(next)
+    setImportError('')
+    setImportNotice('Temporary variation reset to its source position.')
+  }, [variation])
+
+  const returnToMainLine = useCallback(() => {
+    if (!variation) return
+    const anchorPly = variation.line.anchorPly
+    clearVariationInteraction()
+    setPly(anchorPly)
+    setImportError('')
+    setImportNotice('Returned to the main game. The temporary variation was not saved.')
+  }, [clearVariationInteraction, variation])
+
   useEffect(() => {
     if (!enabled || reviewRunning || positionTerminal || engineBusy) {
       client.current?.cancel()
@@ -648,7 +801,7 @@ export function AnalysisWorkspace({
     const request = {
       backend: desktop ? 'desktop' as const : 'browser' as const,
       enginePath,
-      fen: position.fen,
+      fen: displayedPosition.fen,
       settings,
     }
     const cached = ambientAnalysisCache.current.get(request)
@@ -672,7 +825,7 @@ export function AnalysisWorkspace({
     setAnalysis(null)
     setAnalysisError('')
     const timer = window.setTimeout(() => {
-      void analysisClient.analyze(position.fen, enginePath, settings)
+      void analysisClient.analyze(displayedPosition.fen, enginePath, settings)
         .then((response) => {
           if (!active) return
           const next = displayAnalysis(response, false)
@@ -694,7 +847,7 @@ export function AnalysisWorkspace({
       window.clearTimeout(timer)
       analysisClient.cancel()
     }
-  }, [desktop, effort, enabled, engineBusy, engineHashMb, enginePath, engineThreads, multiPv, position.fen, positionTerminal, reviewRunning])
+  }, [desktop, displayedPosition.fen, effort, enabled, engineBusy, engineHashMb, enginePath, engineThreads, multiPv, positionTerminal, reviewRunning])
 
   useEffect(() => {
     const importGate = fileImportGate.current
@@ -716,6 +869,16 @@ export function AnalysisWorkspace({
       const target = event.target instanceof HTMLElement ? event.target : null
       const editable = Boolean(target?.isContentEditable
         || (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)))
+      if (event.key === 'Escape' && !editable && variationPromotion) {
+        event.preventDefault()
+        setVariationPromotion(null)
+        return
+      }
+      if (event.key === 'Escape' && !editable && selectedVariationSquare) {
+        event.preventDefault()
+        setSelectedVariationSquare(null)
+        return
+      }
       const action = reviewNavigationForKey({
         key: event.key,
         editable,
@@ -726,11 +889,21 @@ export function AnalysisWorkspace({
       })
       if (!action) return
       event.preventDefault()
+      // A promotion choice is a temporary, focused decision. Review arrow keys
+      // must not silently throw away the whole branch while it is open.
+      if (variationPromotion) return
+      clearVariationInteraction()
       setPly((value) => reviewPlyAfter(action, value, maxPly))
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [maxPly])
+  }, [clearVariationInteraction, maxPly, selectedVariationSquare, variationPromotion])
+
+  useEffect(() => {
+    if (!variationPromotion) return
+    const frame = window.requestAnimationFrame(() => promotionChoiceRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [variationPromotion])
 
   useEffect(() => {
     const version = ++reviewLoadVersion.current
@@ -772,10 +945,10 @@ export function AnalysisWorkspace({
     // the transient Play handoff if the two ever overlap.
     if (!requestedReviewTarget) {
       const targetPly = resolvePlayPreviewReviewPly(timeline, requestedPlayPreviewTarget)
-      if (targetPly !== null) setPly(targetPly)
+      if (targetPly !== null) selectMainlinePly(targetPly)
     }
     onRequestedPlayPreviewTargetHandled?.()
-  }, [onRequestedPlayPreviewTargetHandled, requestedPlayPreviewTarget, requestedReviewTarget, timeline])
+  }, [onRequestedPlayPreviewTargetHandled, requestedPlayPreviewTarget, requestedReviewTarget, selectMainlinePly, timeline])
 
   useEffect(() => {
     if (!requestedReviewTarget) return
@@ -789,6 +962,7 @@ export function AnalysisWorkspace({
     // This queued navigation is a new user intent. Invalidate both a running
     // review and any earlier saved-review lookup before awaiting its source.
     reviewLoadVersion.current += 1
+    clearVariationInteraction()
     setReviewRunning(false)
     setReviewSaving(false)
     setReviewProgress(null)
@@ -828,7 +1002,7 @@ export function AnalysisWorkspace({
     })()
 
     return () => { cancelled = true }
-  }, [onRequestedReviewTargetHandled, requestedReviewTarget, reviewStore])
+  }, [clearVariationInteraction, onRequestedReviewTargetHandled, requestedReviewTarget, reviewStore])
 
   const stopFullReview = () => {
     reviewRunVersion.current += 1
@@ -842,6 +1016,7 @@ export function AnalysisWorkspace({
 
   const startFullReview = async () => {
     if (!timeline.moves.length || reviewRunning || engineBusy || reviewHydrating) return
+    clearVariationInteraction()
     fileImportGate.current.invalidate()
     // Browser ambient and full-review clients each own a Worker. Full review
     // intentionally pauses candidate lines, so release that idle WebAssembly
@@ -935,6 +1110,7 @@ export function AnalysisWorkspace({
     // The effect below will start its own lookup for `next`; this synchronous
     // fence prevents a just-resolved old report from flashing in between.
     reviewLoadVersion.current += 1
+    clearVariationInteraction()
     stopFullReview()
     setTimeline(next)
     setPly(next.positions.length - 1)
@@ -1010,10 +1186,10 @@ export function AnalysisWorkspace({
   const chooseAnalysisFile = () => fileInput.current?.click()
 
   const copyCurrentFen = async () => {
-    const result = await copyText(position.fen)
+    const result = await copyText(displayedPosition.fen)
     if (result.ok) {
       setImportError('')
-      setImportNotice('Current FEN copied.')
+      setImportNotice(variation ? 'Temporary variation FEN copied.' : 'Current FEN copied.')
     } else {
       setImportNotice('')
       setImportError('Couldn’t copy FEN. Download it instead.')
@@ -1021,10 +1197,10 @@ export function AnalysisWorkspace({
   }
 
   const downloadCurrentFen = () => {
-    const result = downloadText(`knightclub-position-${new Date().toISOString().slice(0, 10)}.fen`, position.fen)
+    const result = downloadText(`knightclub-${variation ? 'variation' : 'position'}-${new Date().toISOString().slice(0, 10)}.fen`, displayedPosition.fen)
     if (result.ok) {
       setImportError('')
-      setImportNotice('FEN download started.')
+      setImportNotice(variation ? 'Temporary variation FEN download started.' : 'FEN download started.')
     } else {
       setImportNotice('')
       setImportError('Couldn’t start the FEN download.')
@@ -1032,11 +1208,18 @@ export function AnalysisWorkspace({
   }
 
   const copyCurrentPgn = async () => {
-    if (!timeline.sourcePgn) return
-    const result = await copyText(timeline.sourcePgn)
+    const pgn = variation ? variationPgn(variation) : timeline.sourcePgn
+    if (!pgn) {
+      setImportNotice('')
+      setImportError(variation
+        ? 'This temporary variation could not be prepared for PGN export.'
+        : 'This position has no PGN to copy.')
+      return
+    }
+    const result = await copyText(pgn)
     if (result.ok) {
       setImportError('')
-      setImportNotice('PGN copied.')
+      setImportNotice(variation ? 'Temporary variation PGN copied.' : 'PGN copied.')
     } else {
       setImportNotice('')
       setImportError('Couldn’t copy PGN. Download it instead.')
@@ -1044,11 +1227,18 @@ export function AnalysisWorkspace({
   }
 
   const downloadCurrentPgn = () => {
-    if (!timeline.sourcePgn) return
-    const result = downloadText(`knightclub-analysis-${new Date().toISOString().slice(0, 10)}.pgn`, timeline.sourcePgn)
+    const pgn = variation ? variationPgn(variation) : timeline.sourcePgn
+    if (!pgn) {
+      setImportNotice('')
+      setImportError(variation
+        ? 'This temporary variation could not be prepared for PGN export.'
+        : 'This position has no PGN to download.')
+      return
+    }
+    const result = downloadText(`knightclub-${variation ? 'variation' : 'analysis'}-${new Date().toISOString().slice(0, 10)}.pgn`, pgn)
     if (result.ok) {
       setImportError('')
-      setImportNotice('PGN download started.')
+      setImportNotice(variation ? 'Temporary variation PGN download started.' : 'PGN download started.')
     } else {
       setImportNotice('')
       setImportError('Couldn’t start the PGN download.')
@@ -1098,38 +1288,83 @@ export function AnalysisWorkspace({
         <ChessBoard
           game={boardGame}
           orientation={orientation}
-          selected={null}
-          legalTargets={inertAnalysisBoardInteraction.legalTargets}
-          lastMove={position.lastMove}
-          evidenceSquares={coachEvidenceSquares}
-          disabled
-          onSquareClick={inertAnalysisBoardInteraction.onSquareClick}
-          onMoveAttempt={inertAnalysisBoardInteraction.onMoveAttempt}
+          selected={variation ? selectedVariationSquare : null}
+          legalTargets={variation ? variationTargets : inertAnalysisBoardInteraction.legalTargets}
+          lastMove={displayedPosition.lastMove}
+          evidenceSquares={variation ? undefined : coachEvidenceSquares}
+          disabled={!variation || Boolean(variationPromotion) || variationAtLimit}
+          onSquareClick={variation ? selectVariationSquare : inertAnalysisBoardInteraction.onSquareClick}
+          onMoveAttempt={variation ? attemptVariationMove : inertAnalysisBoardInteraction.onMoveAttempt}
         />
 
+        {variation ? (
+          <section className="analysis-variation" aria-label="Temporary variation">
+            <div className="analysis-variation__heading">
+              <div>
+                <span className="eyebrow"><GitBranch size={13} />Temporary variation</span>
+                <strong>Explore without changing the game</strong>
+                <small>Try any legal continuation from this position. It stays only in this Review session.</small>
+              </div>
+              <button className="secondary-button" type="button" onClick={returnToMainLine}><ChevronLeft size={15} />Return to game</button>
+            </div>
+            <output className="analysis-variation__moves" aria-live="polite" aria-label="Temporary variation moves">
+              {variation.line.moves.length
+                ? variation.line.moves.map((move) => `${move.moveNumber}${move.color === 'b' ? '…' : '.'} ${move.san}`).join('  ')
+                : 'Your temporary line is ready — choose a piece on the board.'}
+            </output>
+            {variationAtLimit && <small className="analysis-variation__limit" role="status">This line has reached its 256-move limit. Undo or reset to keep exploring.</small>}
+            <div className="analysis-variation__actions">
+              <button className="secondary-button" type="button" onClick={undoTemporaryVariation} disabled={!variation.line.moves.length}><Undo2 size={15} />Undo</button>
+              <button className="secondary-button" type="button" onClick={resetTemporaryVariation} disabled={!variation.line.moves.length}><RotateCcw size={15} />Reset line</button>
+            </div>
+          </section>
+        ) : (
+          <button
+            className="analysis-explore-button secondary-button"
+            type="button"
+            disabled={positionTerminal}
+            onClick={beginVariation}
+          ><GitBranch size={15} />Explore this position</button>
+        )}
+
+        {variationPromotion && (
+          <section className="analysis-variation__promotion" aria-label="Choose variation promotion piece" role="group">
+            <span>Choose promotion</span>
+            <div>
+              {variationPromotion.choices.map((piece, index) => (
+                <button ref={index === 0 ? promotionChoiceRef : undefined} key={piece} type="button" onClick={() => commitVariationMove(variationPromotion.from, variationPromotion.to, piece)}>
+                  <ChessPiece color={boardGame.turn()} type={piece} />
+                  <small>{promotionNames[piece] ?? piece.toUpperCase()}</small>
+                </button>
+              ))}
+            </div>
+            <button className="secondary-button" type="button" onClick={() => setVariationPromotion(null)}>Cancel</button>
+          </section>
+        )}
+
         <div className="analysis-navigation" aria-label="Position navigation. Use Left and Right arrow keys to move through the game." aria-keyshortcuts="ArrowLeft ArrowRight Home End">
-          <button type="button" aria-label="First position" disabled={ply === 0} onClick={() => setPly(0)}><ChevronFirst size={20} /></button>
-          <button type="button" aria-label="Previous position" disabled={ply === 0} onClick={() => setPly((value) => Math.max(0, value - 1))}><ChevronLeft size={20} /></button>
+          <button type="button" aria-label="First position" disabled={ply === 0} onClick={() => selectMainlinePly(0)}><ChevronFirst size={20} /></button>
+          <button type="button" aria-label="Previous position" disabled={ply === 0} onClick={() => selectMainlinePly(ply - 1)}><ChevronLeft size={20} /></button>
           <output aria-live="polite" aria-label={navigationAriaLabel} title={navigationAriaLabel}>{navigationStatus}</output>
-          <button type="button" aria-label="Next position" disabled={ply === maxPly} onClick={() => setPly((value) => Math.min(maxPly, value + 1))}><ChevronRight size={20} /></button>
-          <button type="button" aria-label="Last position" disabled={ply === maxPly} onClick={() => setPly(maxPly)}><ChevronLast size={20} /></button>
+          <button type="button" aria-label="Next position" disabled={ply === maxPly} onClick={() => selectMainlinePly(ply + 1)}><ChevronRight size={20} /></button>
+          <button type="button" aria-label="Last position" disabled={ply === maxPly} onClick={() => selectMainlinePly(maxPly)}><ChevronLast size={20} /></button>
         </div>
 
-        <LiveGameContinuationNotice continuation={liveContinuation} onUpdate={loadCurrentGame} />
+        {!variation && <LiveGameContinuationNotice continuation={liveContinuation} onUpdate={loadCurrentGame} />}
 
-        {timeline.moves.length > 0 && <AnalysisMovePicker moves={timeline.moves} ply={ply} onSelectPly={setPly} />}
+        {timeline.moves.length > 0 && <AnalysisMovePicker moves={timeline.moves} ply={ply} onSelectPly={selectMainlinePly} />}
 
         <section className="analysis-transfer" aria-label="Copy or download current analysis">
           <div>
             <strong>Share</strong>
-            <span>Current position stays on this device.</span>
+            <span>{variation ? 'This temporary line stays on this device until you leave Review.' : 'Current position stays on this device.'}</span>
           </div>
           <div className="analysis-transfer__actions">
-            <button className="secondary-button" type="button" onClick={() => void copyCurrentFen()}><Copy size={14} />Copy current FEN</button>
-            <button className="secondary-button" type="button" onClick={downloadCurrentFen}><Download size={14} />Download FEN</button>
-            {timeline.sourcePgn && <>
-              <button className="secondary-button" type="button" onClick={() => void copyCurrentPgn()}><Copy size={14} />Copy PGN</button>
-              <button className="secondary-button" type="button" onClick={downloadCurrentPgn}><Download size={14} />Download PGN</button>
+            <button className="secondary-button" type="button" onClick={() => void copyCurrentFen()}><Copy size={14} />Copy {variation ? 'variation' : 'current'} FEN</button>
+            <button className="secondary-button" type="button" onClick={downloadCurrentFen}><Download size={14} />{variation ? 'Download variation FEN' : 'Download FEN'}</button>
+            {(variation ? variationHasPgn : timeline.sourcePgn) && <>
+              <button className="secondary-button" type="button" onClick={() => void copyCurrentPgn()}><Copy size={14} />{variation ? 'Copy variation PGN' : 'Copy PGN'}</button>
+              <button className="secondary-button" type="button" onClick={downloadCurrentPgn}><Download size={14} />{variation ? 'Download variation PGN' : 'Download PGN'}</button>
             </>}
           </div>
         </section>
@@ -1231,7 +1466,7 @@ export function AnalysisWorkspace({
                   <div className="turning-points">
                     <span>Key turning points</span>
                     <div>{review.summary.turningPoints.map((move) => (
-                      <button type="button" key={move.ply} onClick={() => setPly(move.ply)}>
+                      <button type="button" key={move.ply} onClick={() => selectMainlinePly(move.ply)}>
                         {move.moveNumber}{move.color === 'b' ? '…' : '.'}{move.san}
                         <em className={`review-badge review-badge--${move.classification}`}>{classificationLabels[move.classification]}</em>
                       </button>
@@ -1267,8 +1502,8 @@ export function AnalysisWorkspace({
         ) : analysis?.lines.length ? (
           <div className="analysis-lines" aria-live="polite">
             {analysis.lines.map((line, index) => {
-              const score = evaluationForPerspective(line.score, position.fen, perspective)
-              const wdl = wdlForPerspective(line.wdl, position.fen, perspective)
+              const score = evaluationForPerspective(line.score, displayedPosition.fen, perspective)
+              const wdl = wdlForPerspective(line.wdl, displayedPosition.fen, perspective)
               return (
                 <article className={`analysis-line ${index === 0 ? 'analysis-line--best' : ''}`} key={line.multiPv}>
                   <div className="analysis-line__score">
@@ -1289,7 +1524,7 @@ export function AnalysisWorkspace({
           <div className="analysis-empty" role="status"><Gauge size={28} /><strong>No legal continuation</strong><span>This may be a checkmate, stalemate or other terminal position.</span></div>
         )}
 
-        <AnalysisMoveList key={reviewKey ?? timeline.startFen} moveRows={moveRows} ply={ply} review={review} onSelectPly={setPly} />
+        <AnalysisMoveList key={reviewKey ?? timeline.startFen} moveRows={moveRows} ply={ply} review={variation ? null : review} onSelectPly={selectMainlinePly} />
       </aside>
     </section>
   )

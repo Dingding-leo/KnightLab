@@ -4,6 +4,7 @@
 
 ### Added
 
+- Review now offers an explicitly temporary, local **Explore this position** branch: legal click/drag moves, keyboard-safe focused promotion choice, Undo/Reset/Return controls, an explicit non-save notice when main-line navigation leaves the branch, branch-specific Stockfish analysis and standalone FEN/PGN transfer without modifying the original game; long sequential branches reuse verified local replay history and create PGN only when transferred
 - Personal **From your games** queues now render a 24-position picker window with an explicit **Show N more positions** action, preserve a current/requested deep item in that window and use 44 px phone targets
 - Review now initializes its timeline and selected position from one shared PGN parse, then reuses that timeline for an unchanged live game
 - Named local opponents now receive two principal variations from one existing bounded play search and may select only a legal, exact-centipawn, close second line that demonstrably fits their declared forcing, classical or pressure preference

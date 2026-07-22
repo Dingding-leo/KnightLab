@@ -278,6 +278,7 @@ describe('analysis workspace convenience contracts', () => {
     expect(markup).toContain('Download FEN')
     expect(markup).toContain('Copy PGN')
     expect(markup).toContain('Download PGN')
+    expect(markup).toContain('Explore this position')
     expect(markup).toContain('aria-label="First position"')
     expect(markup).toContain('aria-label="Previous position"')
     expect(markup).toContain('aria-label="Next position"')
@@ -315,6 +316,7 @@ describe('analysis workspace convenience contracts', () => {
     )
     expect(markup).toContain('No legal continuation')
     expect(markup).not.toContain('Engine unavailable')
+    expect(markup).toMatch(/<button class="analysis-explore-button secondary-button" type="button" disabled="">[\s\S]*?Explore this position/)
   })
 
   it('defers optional review work while a live bot move is using the engine', () => {

@@ -32,7 +32,8 @@
 - [x] First original named local opponent roster with legal zero-engine-cost opening cues and persistent selection
 - [x] Human-like bot profiles using principled candidate move sampling beyond the authored opening route
 - [x] Analysis board with PGN/FEN replay, navigation and real MultiPV candidate lines
-- [ ] Analysis arrows, annotations, editable variations and position editor
+- [x] Ephemeral local Review variations with legal board input, promotion, branch FEN/PGN transfer and exact main-line return
+- [ ] Persistent editable variation trees, arrows/annotations and a position editor
 - [ ] Syzygy tablebase integration, local-first where storage permits
 
 ## Phase 2 — Full post-game review
