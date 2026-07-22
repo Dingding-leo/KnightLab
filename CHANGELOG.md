@@ -72,6 +72,8 @@
 
 ### Changed
 
+- Review, Train and Insights are now independently loaded local workspaces with hover/focus prefetch, stable loading feedback and a scoped reload recovery instead of adding their code to the initial Play bundle
+- Browser and desktop Stockfish runtimes now reuse only acknowledged unchanged UCI option blocks while retaining `isready` fences, preventing repeated Hash/option churn during continuous play and full-game review
 - Opening Play no longer probes Stockfish or constructs the KnightBot fallback worker. Both engines initialize only for a real bot move or explicit verification.
 - Easy/Balanced/Strong play presets now use 80/160/280 ms, 10k/30k/70k node limits, one thread and 16/16/32 MB hash respectively; a cancellable UI pacing floor preserves a natural reply cadence without extra search CPU.
 - The fallback KnightBot is a bounded one-ply recovery path instead of a depth-two full-tree search.
@@ -104,6 +106,7 @@
 
 ### Verification
 
+- Responsive workspace/engine pass: lint, typecheck, the 43-file / 202-test frontend suite, full 30-test Rust suite, production web build and macOS `KnightClub.app` bundle passed. The local Vite server responded successfully at `http://127.0.0.1:5173/`; the production entry is 348.29 kB / 108.20 kB gzip, with Review/Train/Insights emitted as independent async chunks.
 - Workspace handoff: focused 5-file / 27-test suite and full 35-file / 155-test frontend suite passed, along with lint, typecheck, web build, 23 Rust tests and the macOS Tauri bundle. In-app browser verification observed Play at `scrollY = 550` changing to Review at `scrollY = 0`, with the Review title focused and 37 px from the viewport top; activating Review again at `scrollY = 300` preserved `scrollY = 300`. A dedicated packaged-desktop UX walkthrough remains pending.
 - Local PGN/FEN transfer: `npm test` passed (35 files / 155 tests), as did lint, typecheck, web build, 23 Rust tests and the macOS Tauri bundle at `src-tauri/target/release/bundle/macos/KnightClub.app`. Automated coverage includes pre-read declared-size rejection, latest-selection-wins, valid PGN misnamed `.fen`, a focusable picker and toolbar-adjacent feedback. Browser verification covered explicit Play controls, valid Review FEN and invalid-FEN timeline preservation; a dedicated desktop transfer walkthrough remains a documented handoff item.
 - Desktop board clarity: a browser/layout audit at 1470 × 801 showed the wide-board target increasing from about 541 px to about 621 px after the 260 px → 180 px desktop reserve change. The current 35-file/155-test frontend suite, typecheck, lint, web build and macOS Tauri bundle passed. This was not a manual packaged-desktop walkthrough, which remains pending.

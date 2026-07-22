@@ -108,6 +108,28 @@ describe('BrowserStockfishEngine', () => {
     expect(worker.terminated).toBe(true)
   })
 
+  it('reuses acknowledged UCI options while retaining a ready fence between searches', async () => {
+    const worker = new FakeStockfishWorker()
+    const engine = new BrowserStockfishEngine(() => worker)
+
+    await engine.analyze(fen, { moveTimeMs: 120, depth: 10, nodes: 10_000, multiPv: 1, hashMb: 16 })
+    await engine.analyze(fen, { moveTimeMs: 200, depth: 12, nodes: 20_000, multiPv: 1, hashMb: 16 })
+    await engine.analyze(fen, { moveTimeMs: 200, depth: 12, nodes: 20_000, multiPv: 2, hashMb: 16 })
+
+    const optionMessages = worker.messages.filter((message) => message.startsWith('setoption name '))
+    expect(optionMessages).toHaveLength(14)
+    expect(optionMessages.filter((message) => message === 'setoption name MultiPV value 1')).toHaveLength(1)
+    expect(optionMessages.filter((message) => message === 'setoption name MultiPV value 2')).toHaveLength(1)
+    expect(worker.messages.filter((message) => message === 'isready')).toHaveLength(4)
+    expect(worker.messages.filter((message) => message.startsWith('go '))).toEqual([
+      'go movetime 120 depth 10 nodes 10000',
+      'go movetime 200 depth 12 nodes 20000',
+      'go movetime 200 depth 12 nodes 20000',
+    ])
+
+    engine.dispose()
+  })
+
   it('stops an active search and rejects it as an abort', async () => {
     const worker = new FakeStockfishWorker()
     worker.autoCompleteSearch = false

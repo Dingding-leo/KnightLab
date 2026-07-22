@@ -22,6 +22,21 @@ fn fake_engine(script_body: &str) -> tempfile::TempDir {
     directory
 }
 
+fn fake_engine_with_command_log(script_body: &str) -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().expect("temporary engine directory");
+    let path = directory.path().join("stockfish-analysis-test");
+    let command_log = directory.path().join("commands.log");
+    let script = format!(
+        "#!/bin/sh\nCOMMAND_LOG=\"{}\"\n{script_body}\n",
+        command_log.display()
+    );
+    fs::write(&path, script).expect("write fake engine");
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).unwrap();
+    (directory, command_log)
+}
+
 fn engine_path(directory: &Path) -> PathBuf {
     directory.join("stockfish-analysis-test")
 }
@@ -127,6 +142,90 @@ done
     assert_eq!(outcome.lines[0].score.value, 31);
     assert_eq!(outcome.lines[0].score.bound, None);
     assert_eq!(outcome.lines[1].score.kind, "mate");
+}
+
+#[test]
+fn reuses_acknowledged_options_but_fences_each_analysis_request() {
+    let (directory, command_log) = fake_engine_with_command_log(
+        r#"
+while IFS= read -r line; do
+  echo "$line" >> "$COMMAND_LOG"
+  case "$line" in
+    uci) echo "id name Cached Analysis Fixture"; echo "uciok" ;;
+    isready) echo "readyok" ;;
+    go*) echo "bestmove e2e4" ;;
+    quit) exit 0 ;;
+  esac
+done
+"#,
+    );
+    let mut engine = EngineSupervisor::new(engine_path(directory.path()));
+    let cancelled = AtomicU64::new(0);
+    let settings = resolve_analysis_settings(request()).expect("settings");
+    let mut go_only_change = settings.clone();
+    go_only_change.move_time_ms = 500;
+    let mut option_change = go_only_change.clone();
+    option_change.multi_pv = 2;
+
+    engine
+        .analyze(START_FEN, &settings, Duration::from_secs(3), 1, &cancelled)
+        .expect("first analysis");
+    engine
+        .analyze(
+            START_FEN,
+            &go_only_change,
+            Duration::from_secs(3),
+            2,
+            &cancelled,
+        )
+        .expect("go-only change analysis");
+    engine
+        .analyze(
+            START_FEN,
+            &option_change,
+            Duration::from_secs(3),
+            3,
+            &cancelled,
+        )
+        .expect("option change analysis");
+
+    let commands = fs::read_to_string(command_log).expect("read command log");
+    let lines: Vec<_> = commands.lines().collect();
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("setoption name "))
+            .count(),
+        12,
+        "one six-command option block per effective option vector"
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| **line == "setoption name MultiPV value 3")
+            .count(),
+        1
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| **line == "setoption name MultiPV value 2")
+            .count(),
+        1
+    );
+    assert_eq!(lines.iter().filter(|line| **line == "isready").count(), 4);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("go movetime "))
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![
+            "go movetime 800 depth 18 nodes 250000",
+            "go movetime 500 depth 18 nodes 250000",
+            "go movetime 500 depth 18 nodes 250000",
+        ]
+    );
 }
 
 #[test]

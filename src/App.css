@@ -1001,6 +1001,22 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
 .trainer-card p { margin: 0 0 20px; color: var(--muted); font-size: 12px; line-height: 1.65; }
 .content-card textarea { margin: 7px 0 10px; }
 
+.workspace-loading {
+  min-height: 238px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--accent);
+  text-align: left;
+}
+
+.workspace-loading > div { display: grid; gap: 3px; }
+.workspace-loading strong { color: var(--muted-strong); font-size: 13px; }
+.workspace-loading span { color: var(--muted); font-size: 11px; }
+.workspace-loading--error { color: var(--danger); }
+.workspace-loading--error button { justify-self: start; margin-top: 7px; }
+
 .review-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 .analysis-workspace {

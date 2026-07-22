@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Chess, type Color, type PieceSymbol, type Square } from 'chess.js'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import {
@@ -30,14 +30,11 @@ import {
 } from 'lucide-react'
 import './App.css'
 import { ChessBoard } from './components/ChessBoard'
-import { AnalysisWorkspace } from './components/AnalysisWorkspace'
 import { createPgnTimeline } from './analysis/analysisModel'
 import { EngineSettingsPanel, type EngineStatus } from './components/EngineSettingsPanel'
 import { GameDecisionDialog, type GameDecision } from './components/GameDecisionDialog'
 import { ChessPiece } from './components/ChessPiece'
-import { InsightsDashboard } from './components/InsightsDashboard'
 import { MoveList } from './components/MoveList'
-import { TrainingWorkspace } from './components/TrainingWorkspace'
 import type { TacticsSprintResult } from './components/TacticsSprint'
 import {
   cloneGame,
@@ -158,6 +155,58 @@ const pageMeta: Record<Tab, { eyebrow: string; title: string; description: strin
   train: { eyebrow: 'Daily practice', title: 'Train', description: 'Local tactics, personal review moments, and board vision drills.' },
   library: { eyebrow: 'On this device', title: 'Library', description: 'Your completed games, private and searchable.' },
   insights: { eyebrow: 'Performance', title: 'Insights', description: 'A clear view of your local playing history.' },
+}
+
+// Keep Play's first paint focused on the board. These workspaces pull in
+// analysis, review and training code that a player does not need until they
+// explicitly leave the board; module-level loaders let navigation prefetch
+// them on hover or keyboard focus before the click happens.
+const loadAnalysisWorkspace = () => import('./components/AnalysisWorkspace')
+const loadTrainingWorkspace = () => import('./components/TrainingWorkspace')
+const loadInsightsDashboard = () => import('./components/InsightsDashboard')
+
+const AnalysisWorkspace = lazy(async () => ({ default: (await loadAnalysisWorkspace()).AnalysisWorkspace }))
+const TrainingWorkspace = lazy(async () => ({ default: (await loadTrainingWorkspace()).TrainingWorkspace }))
+const InsightsDashboard = lazy(async () => ({ default: (await loadInsightsDashboard()).InsightsDashboard }))
+
+function preloadWorkspace(tab: Tab): void {
+  if (tab === 'review') void loadAnalysisWorkspace()
+  if (tab === 'train') void loadTrainingWorkspace()
+  if (tab === 'insights') void loadInsightsDashboard()
+}
+
+function WorkspaceLoading({ label }: { label: string }) {
+  return (
+    <section className="workspace-loading content-card content-card--wide" aria-busy="true" role="status" aria-live="polite">
+      <RefreshCw className="spin" size={20} aria-hidden="true" />
+      <div>
+        <strong>Opening {label}</strong>
+        <span>The board stays ready while this local workspace loads.</span>
+      </div>
+    </section>
+  )
+}
+
+class WorkspaceLoadBoundary extends Component<{ label: string; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <section className="workspace-loading workspace-loading--error content-card content-card--wide" role="alert">
+        <RefreshCw size={20} aria-hidden="true" />
+        <div>
+          <strong>Couldn’t open {this.props.label}</strong>
+          <span>A local workspace file is unavailable. Reload KnightClub to restore it.</span>
+          <button className="secondary-button" type="button" onClick={() => window.location.reload()}>Reload KnightClub</button>
+        </div>
+      </section>
+    )
+  }
 }
 
 const QUICK_TIME_CONTROLS = [
@@ -1361,7 +1410,14 @@ export default function App() {
         </button>
         <nav aria-label="Primary navigation">
           {navItems.map(({ id, label, icon: Icon }) => (
-            <button key={id} type="button" className={tab === id ? 'is-active' : ''} onClick={() => navigateTo(id)}>
+            <button
+              key={id}
+              type="button"
+              className={tab === id ? 'is-active' : ''}
+              onPointerEnter={() => preloadWorkspace(id)}
+              onFocus={() => preloadWorkspace(id)}
+              onClick={() => { preloadWorkspace(id); navigateTo(id) }}
+            >
               <Icon size={21} strokeWidth={2} />
               <span>{label}</span>
             </button>
@@ -1609,37 +1665,45 @@ export default function App() {
         )}
 
         {tab === 'review' && (
-          <AnalysisWorkspace
-            desktop={desktop}
-            // This is derived from the position rather than the visual
-            // `thinking` flag so Review cannot win the short race between a
-            // human move and the bot effect starting its search.
-            engineBusy={premoveWindow}
-            currentPgn={sharePgn}
-            enginePath={engineSettings.enginePath}
-            threads={engineSettings.threads}
-            hashMb={engineSettings.hashMb}
-            reviewStore={reviewStore}
-            onReviewSaved={markLinkedGameReviewed}
-            retryStore={retryStore}
-            onRetriesSaved={retainRetryItems}
-            onOpenRetryQueue={openRetryQueue}
-            requestedReviewTarget={requestedReviewTarget}
-            onRequestedReviewTargetHandled={clearRequestedReviewTarget}
-          />
+          <WorkspaceLoadBoundary label="Review">
+            <Suspense fallback={<WorkspaceLoading label="Review" />}>
+              <AnalysisWorkspace
+                desktop={desktop}
+                // This is derived from the position rather than the visual
+                // `thinking` flag so Review cannot win the short race between a
+                // human move and the bot effect starting its search.
+                engineBusy={premoveWindow}
+                currentPgn={sharePgn}
+                enginePath={engineSettings.enginePath}
+                threads={engineSettings.threads}
+                hashMb={engineSettings.hashMb}
+                reviewStore={reviewStore}
+                onReviewSaved={markLinkedGameReviewed}
+                retryStore={retryStore}
+                onRetriesSaved={retainRetryItems}
+                onOpenRetryQueue={openRetryQueue}
+                requestedReviewTarget={requestedReviewTarget}
+                onRequestedReviewTargetHandled={clearRequestedReviewTarget}
+              />
+            </Suspense>
+          </WorkspaceLoadBoundary>
         )}
 
         {tab === 'train' && (
-          <TrainingWorkspace
-            tacticProgress={tacticProgress}
-            onRecordTacticAttempt={recordTacticAttempt}
-            retryItems={retryItems}
-            requestedRetryKey={requestedRetryKey}
-            onSaveRetryItem={saveRetryItem}
-            onDeleteRetryItem={deleteRetryItem}
-            onBackToReview={returnToReview}
-            onOpenReview={() => navigateTo('review')}
-          />
+          <WorkspaceLoadBoundary label="Train">
+            <Suspense fallback={<WorkspaceLoading label="Train" />}>
+              <TrainingWorkspace
+                tacticProgress={tacticProgress}
+                onRecordTacticAttempt={recordTacticAttempt}
+                retryItems={retryItems}
+                requestedRetryKey={requestedRetryKey}
+                onSaveRetryItem={saveRetryItem}
+                onDeleteRetryItem={deleteRetryItem}
+                onBackToReview={returnToReview}
+                onOpenReview={() => navigateTo('review')}
+              />
+            </Suspense>
+          </WorkspaceLoadBoundary>
         )}
 
         {tab === 'library' && (
@@ -1679,11 +1743,15 @@ export default function App() {
         )}
 
         {tab === 'insights' && (
-          <InsightsDashboard
-            games={library}
-            onPlay={() => navigateTo('play')}
-            onReviewGame={(item) => openStored(item, 'review')}
-          />
+          <WorkspaceLoadBoundary label="Insights">
+            <Suspense fallback={<WorkspaceLoading label="Insights" />}>
+              <InsightsDashboard
+                games={library}
+                onPlay={() => navigateTo('play')}
+                onReviewGame={(item) => openStored(item, 'review')}
+              />
+            </Suspense>
+          </WorkspaceLoadBoundary>
         )}
       </main>
 

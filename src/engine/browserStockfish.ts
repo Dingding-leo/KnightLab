@@ -218,6 +218,8 @@ export class BrowserStockfishEngine {
   private readonly workerFactory: WorkerFactory
   private worker: StockfishWorker | null = null
   private ready = false
+  /** Exact effective UCI option commands acknowledged by this worker. */
+  private configuredOptions: string[] | null = null
   private initialization: Promise<void> | null = null
   private engineName = 'Stockfish 18 Lite'
   private readonly waiters = new Set<LineWaiter>()
@@ -415,10 +417,28 @@ export class BrowserStockfishEngine {
       `setoption name UCI_Elo value ${boundedInteger(options.elo, 1320, 3190)}`,
       `setoption name UCI_ShowWDL value ${options.showWdl ? 'true' : 'false'}`,
     ]
-    for (const command of commands) worker.postMessage(command)
-    const ready = this.waitForLine((line) => line === 'readyok', READY_TIMEOUT_MS)
-    worker.postMessage('isready')
-    await ready
+    const unchanged = this.configuredOptions?.length === commands.length
+      && this.configuredOptions.every((command, index) => command === commands[index])
+
+    try {
+      if (!unchanged) {
+        // A partial option write must never be treated as configured. Hash in
+        // particular can reset an engine's transposition table, so avoid
+        // replaying this block unless the effective settings really changed.
+        this.configuredOptions = null
+        for (const command of commands) worker.postMessage(command)
+      }
+      // Keep the existing request fence even on a cache hit. It drains any
+      // late UCI output before the next position/go pair without reapplying
+      // unchanged options.
+      const ready = this.waitForLine((line) => line === 'readyok', READY_TIMEOUT_MS)
+      worker.postMessage('isready')
+      await ready
+      if (!unchanged) this.configuredOptions = commands
+    } catch (error) {
+      this.configuredOptions = null
+      throw error
+    }
   }
 
   private collectSearch(fen: string, options: BrowserSearchOptions): Promise<BrowserSearchResult> {
@@ -529,6 +549,7 @@ export class BrowserStockfishEngine {
     const worker = this.worker
     this.worker = null
     this.ready = false
+    this.configuredOptions = null
     this.initialization = null
     if (worker) {
       worker.onmessage = null

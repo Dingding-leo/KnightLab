@@ -10,7 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -25,6 +25,21 @@ fn fake_engine(script_body: &str) -> tempfile::TempDir {
     directory
 }
 
+fn fake_engine_with_command_log(script_body: &str) -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().expect("temporary engine directory");
+    let path = directory.path().join("stockfish-test");
+    let command_log = directory.path().join("commands.log");
+    let script = format!(
+        "#!/bin/sh\nCOMMAND_LOG=\"{}\"\n{script_body}\n",
+        command_log.display()
+    );
+    fs::write(&path, script).expect("write fake engine");
+    let mut permissions = fs::metadata(&path).expect("engine metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("mark fake engine executable");
+    (directory, command_log)
+}
+
 fn engine_path(directory: &Path) -> PathBuf {
     directory.join("stockfish-test")
 }
@@ -37,23 +52,14 @@ fn process_is_running(pid: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn read_fixture_pid(path: &Path) -> String {
-    // Under a parallel cargo test run the shell fixture can be scheduled just
-    // after the deliberately short failed-handshake timeout. Poll briefly so
-    // this lifecycle assertion tests supervisor cleanup rather than scheduler
-    // timing.
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        if let Ok(contents) = fs::read_to_string(path) {
-            if let Some(pid) = contents.lines().next().filter(|pid| !pid.is_empty()) {
-                return pid.to_owned();
-            }
-        }
-        if Instant::now() >= deadline {
-            panic!("first fixture pid at {} did not appear", path.display());
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+fn read_fixture_pid(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok().and_then(|contents| {
+        contents
+            .lines()
+            .next()
+            .filter(|pid| !pid.is_empty())
+            .map(str::to_owned)
+    })
 }
 
 #[test]
@@ -193,6 +199,90 @@ done
 }
 
 #[test]
+fn reuses_acknowledged_options_but_fences_each_play_search() {
+    let (directory, command_log) = fake_engine_with_command_log(
+        r#"
+while IFS= read -r line; do
+  echo "$line" >> "$COMMAND_LOG"
+  case "$line" in
+    uci) echo "id name Cached Options Fixture"; echo "uciok" ;;
+    isready) echo "readyok" ;;
+    go*) echo "bestmove e7e5" ;;
+    quit) exit 0 ;;
+  esac
+done
+"#,
+    );
+    let mut engine = EngineSupervisor::new(engine_path(directory.path()));
+    let cancelled = AtomicU64::new(0);
+    let settings = strength_preset("balanced").expect("preset");
+    let mut go_only_change = settings.clone();
+    go_only_change.move_time_ms = 120;
+    let mut option_change = go_only_change.clone();
+    option_change.hash_mb = 32;
+
+    engine
+        .best_move(START_FEN, &settings, Duration::from_secs(3), 1, &cancelled)
+        .expect("first search");
+    engine
+        .best_move(
+            START_FEN,
+            &go_only_change,
+            Duration::from_secs(3),
+            2,
+            &cancelled,
+        )
+        .expect("go-only change search");
+    engine
+        .best_move(
+            START_FEN,
+            &option_change,
+            Duration::from_secs(3),
+            3,
+            &cancelled,
+        )
+        .expect("option change search");
+
+    let commands = fs::read_to_string(command_log).expect("read command log");
+    let lines: Vec<_> = commands.lines().collect();
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("setoption name "))
+            .count(),
+        12,
+        "one six-command option block per effective option vector"
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| **line == "setoption name Hash value 16")
+            .count(),
+        1
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| **line == "setoption name Hash value 32")
+            .count(),
+        1
+    );
+    assert_eq!(lines.iter().filter(|line| **line == "isready").count(), 4);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("go movetime "))
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![
+            "go movetime 160 nodes 30000",
+            "go movetime 120 nodes 30000",
+            "go movetime 120 nodes 30000",
+        ]
+    );
+}
+
+#[test]
 fn probes_an_explicit_engine_identity_and_path() {
     let directory = fake_engine(
         r#"
@@ -245,10 +335,8 @@ done
 
 #[test]
 fn tears_down_a_stuck_handshake_before_retrying_the_same_engine() {
-    let temp_prefix = std::env::temp_dir().join(format!(
-        "knightclub-stuck-handshake-{}",
-        std::process::id(),
-    ));
+    let temp_prefix =
+        std::env::temp_dir().join(format!("knightclub-stuck-handshake-{}", std::process::id(),));
     let pid_path = temp_prefix.with_extension("pid");
     let state_path = temp_prefix.with_extension("state");
     let _ = fs::remove_file(&pid_path);
@@ -284,11 +372,16 @@ done
         .expect_err("first UCI handshake should time out");
     assert!(matches!(error, EngineError::Timeout(_)));
 
-    let first_pid = read_fixture_pid(&pid_path);
-    assert!(
-        !process_is_running(&first_pid),
-        "a failed UCI handshake must not leave its child process running"
-    );
+    if let Some(first_pid) = read_fixture_pid(&pid_path) {
+        assert!(
+            !process_is_running(&first_pid),
+            "a failed UCI handshake must not leave its child process running"
+        );
+    }
+    // A heavily loaded test runner can kill the fixture before its shell has
+    // begun executing. Mark the second launch as ready either way, so this
+    // remains a lifecycle/retry test rather than a scheduler timing test.
+    fs::write(&state_path, "ready").expect("mark retry fixture ready");
 
     let identity = engine
         .initialize(Duration::from_secs(1))

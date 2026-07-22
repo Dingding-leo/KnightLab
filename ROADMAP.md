@@ -73,7 +73,7 @@
 
 ## Phase 5 — Product polish
 
-- [x] On-demand engine startup, single-thread/node-bounded play presets, clock-aware repaint throttling and bot-over-review engine priority
+- [x] On-demand engine startup, non-Play workspace code splitting/prefetch, single-thread/node-bounded play presets, clock-aware repaint throttling, cached acknowledged UCI options and bot-over-review engine priority
 - [ ] Keyboard-complete navigation and screen-reader audit
 - [ ] Multiple original board/piece themes and optional sounds
 - [ ] Chess960 and selected offline variants

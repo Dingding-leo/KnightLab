@@ -648,6 +648,8 @@ pub struct EngineSupervisor {
     stdin: Option<ChildStdin>,
     output: Option<mpsc::Receiver<String>>,
     identity: Option<EngineIdentity>,
+    /// Exact UCI options that reached `readyok` for the current child process.
+    configured_options: Option<Vec<String>>,
 }
 
 impl EngineSupervisor {
@@ -658,6 +660,7 @@ impl EngineSupervisor {
             stdin: None,
             output: None,
             identity: None,
+            configured_options: None,
         }
     }
 
@@ -739,6 +742,7 @@ impl EngineSupervisor {
         self.stdin.take();
         self.output.take();
         self.identity = None;
+        self.configured_options = None;
         if let Some(mut child) = self.child.take() {
             terminate_child(&mut child);
         }
@@ -753,15 +757,31 @@ impl EngineSupervisor {
         cancelled_through: &AtomicU64,
     ) -> Result<SearchOutcome, EngineError> {
         validate_fen(fen)?;
+        let result =
+            self.best_move_after_validation(fen, settings, timeout, request_id, cancelled_through);
+        // A timeout, cancellation or protocol failure can leave output in
+        // flight. The next request still fences with `isready`, but requiring
+        // a fresh option acknowledgement avoids trusting a partial state when
+        // this supervisor is reused directly.
+        if result.is_err() {
+            self.configured_options = None;
+        }
+        result
+    }
+
+    fn best_move_after_validation(
+        &mut self,
+        fen: &str,
+        settings: &SearchSettings,
+        timeout: Duration,
+        request_id: u64,
+        cancelled_through: &AtomicU64,
+    ) -> Result<SearchOutcome, EngineError> {
         if self.identity.is_none() {
             self.initialize(timeout)?;
         }
-        for command in uci_option_commands(settings) {
-            self.send(&command)?;
-        }
-        self.send("isready")?;
         let deadline = Instant::now() + timeout;
-        self.wait_for("readyok", deadline)?;
+        self.configure_options(uci_option_commands(settings), deadline)?;
         self.send(&format!("position fen {fen}"))?;
         self.send(&go_command(settings))?;
         let started = Instant::now();
@@ -823,15 +843,27 @@ impl EngineSupervisor {
         if cancelled_through.load(Ordering::Acquire) == request_id {
             return Err(EngineError::Cancelled);
         }
+        let result =
+            self.analyze_after_validation(fen, settings, timeout, request_id, cancelled_through);
+        if result.is_err() {
+            self.configured_options = None;
+        }
+        result
+    }
+
+    fn analyze_after_validation(
+        &mut self,
+        fen: &str,
+        settings: &AnalysisSettings,
+        timeout: Duration,
+        request_id: u64,
+        cancelled_through: &AtomicU64,
+    ) -> Result<AnalysisOutcome, EngineError> {
         if self.identity.is_none() {
             self.initialize(timeout)?;
         }
-        for command in analysis_option_commands(settings) {
-            self.send(&command)?;
-        }
-        self.send("isready")?;
         let deadline = Instant::now() + timeout;
-        self.wait_for("readyok", deadline)?;
+        self.configure_options(analysis_option_commands(settings), deadline)?;
         self.send(&format!("position fen {fen}"))?;
         self.send(&analysis_go_command(settings))?;
         let started = Instant::now();
@@ -881,6 +913,43 @@ impl EngineSupervisor {
                 });
             }
         }
+    }
+
+    fn configure_options(
+        &mut self,
+        commands: Vec<String>,
+        deadline: Instant,
+    ) -> Result<(), EngineError> {
+        let unchanged = self
+            .configured_options
+            .as_ref()
+            .is_some_and(|configured| configured == &commands);
+
+        let result = (|| {
+            if !unchanged {
+                // Never cache a partly-written option vector. Reapplying Hash
+                // can clear the transposition table, so a hit also avoids
+                // needless memory/cache churn during long reviews.
+                self.configured_options = None;
+                for command in &commands {
+                    self.send(command)?;
+                }
+            }
+            // Preserve a UCI ready barrier for every request. This drains any
+            // late output before a new position/go pair, including when the
+            // preceding request was cancelled by a caller outside Tauri.
+            self.send("isready")?;
+            self.wait_for("readyok", deadline)?;
+            if !unchanged {
+                self.configured_options = Some(commands);
+            }
+            Ok(())
+        })();
+
+        if result.is_err() {
+            self.configured_options = None;
+        }
+        result
     }
 
     fn send(&mut self, line: &str) -> Result<(), EngineError> {

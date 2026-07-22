@@ -43,6 +43,8 @@ A primary-workspace change is a navigation handoff, not a game-state action. Aft
 
 Activating the already selected workspace is deliberately a no-op: it neither scrolls nor moves focus. This preserves a reader's place while a real workspace change gives pointer, keyboard and screen-reader users a stable beginning and landmark name.
 
+Play-critical board, clock and game controls remain in the entry bundle. Review, Train and Insights each live behind an independent React lazy boundary so their review/training/dashboard modules do not delay first board paint. Hovering or focusing one of those navigation buttons starts only that module fetch before activation; a sized loading card preserves the page shape without taking focus from `#workspace-title`. A boundary local to each workspace presents an honest Reload action if a stale or unavailable async PWA asset fails, rather than taking down the Play shell.
+
 ### Completion execution
 
 `GameTermination` is the single serializable authority for non-board endings: timeout, resignation and draw agreement. Opening a destructive confirmation or hot-seat draw response settles and pauses the clock, which also cancels active engine work through the existing effect lifecycle. Decline/cancel resumes the same settled clock; confirmation locks the board and saves one result-aware PGN. Bot draw decisions are deterministic from material, game phase and strength until full engine evaluation is available.
@@ -113,7 +115,7 @@ Production browser builds register the PWA service worker; Vite development and 
 
 ### Engine settings execution
 
-`EngineSettings` is normalized before persistence and again before every frontend request. Preset profiles remain adapter-owned; Elo and Custom profiles send bounded skill, move-time, depth, node, MultiPV, thread and Hash values. Rust independently rejects desktop values before emitting any UCI command. The browser adapter enforces its single-threaded build and caps Hash at 128 MB. A probe completes `uci`/`isready` and returns the real identity plus native path or WebAssembly identity without touching game state. Choosing a new path or changing search settings invalidates the current frontend search through the existing effect cleanup.
+`EngineSettings` is normalized before persistence and again before every frontend request. Preset profiles remain adapter-owned; Elo and Custom profiles send bounded skill, move-time, depth, node, MultiPV, thread and Hash values. Rust independently rejects desktop values before emitting any UCI command. The browser adapter enforces its single-threaded build and caps Hash at 128 MB. Each persistent browser Worker or native supervisor keeps its own last option vector only after `readyok`; unchanged settings skip the redundant `setoption` block but each search still sends `isready` before its new position/go pair. Any worker/process drop, timeout or failed setup clears that cache; native cancellation also clears it, while a browser worker keeps it only after a clean stop/drain sequence. A probe completes `uci`/`isready` and returns the real identity plus native path or WebAssembly identity without touching game state. Choosing a new path or changing search settings invalidates the current frontend search through the existing effect cleanup.
 
 ## Engine isolation rules
 
