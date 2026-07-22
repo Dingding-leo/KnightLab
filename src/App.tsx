@@ -98,7 +98,7 @@ import {
   type QueuedPremove,
 } from './domain/premove'
 import { GameSoundPlayer, type GameSoundEvent } from './audio/gameSounds'
-import { gameShortcutFor } from './domain/shortcuts'
+import { gameShortcutFor, promotionShortcutFor } from './domain/shortcuts'
 import { copyText, downloadText } from './domain/textTransfer'
 import { positionTransferFor } from './domain/positionTransfer'
 import { previewPlyAfter, type PlayPreviewNavigation as PlayPreviewNavigationAction } from './domain/playPreview'
@@ -275,6 +275,49 @@ const promotionNames: Partial<Record<PieceSymbol, string>> = {
 }
 
 const premovePromotionChoices: PieceSymbol[] = ['q', 'r', 'b', 'n']
+
+export interface PromotionDialogProps {
+  kind: Promotion['kind']
+  choices: readonly PieceSymbol[]
+  color: Color
+  onChoose: (piece: PieceSymbol) => void
+  onCancel: () => void
+}
+
+/** Keeps a pawn promotion in the same keyboard flow as the move that reached it. */
+export function PromotionDialog({ kind, choices, color, onChoose, onCancel }: PromotionDialogProps) {
+  const defaultPiece = choices.includes('q') ? 'q' : choices[0]
+  const title = kind === 'premove' ? 'Queue a promotion' : 'Choose a piece'
+
+  return (
+    <div className="modal" role="dialog" aria-modal="true" aria-labelledby="promotion-title" aria-describedby="promotion-shortcuts">
+      <div className="modal-card">
+        <span className="eyebrow">{kind === 'premove' ? 'Premove promotion' : 'Pawn promotion'}</span>
+        <h2 id="promotion-title">{title}</h2>
+        <p id="promotion-shortcuts" className="sr-only">Press Q, R, B or N to choose Queen, Rook, Bishop or Knight. Press Escape to cancel.</p>
+        <div className="promotion-grid">
+          {choices.map((piece) => {
+            const name = promotionNames[piece] ?? piece.toUpperCase()
+            return (
+              <button
+                key={piece}
+                type="button"
+                autoFocus={piece === defaultPiece}
+                aria-keyshortcuts={piece.toUpperCase()}
+                aria-label={`${name}; press ${piece.toUpperCase()}`}
+                onClick={() => onChoose(piece)}
+              >
+                <ChessPiece color={color} type={piece} />
+                <span>{name}</span>
+              </button>
+            )
+          })}
+        </div>
+        <button className="secondary-button" type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  )
+}
 
 function restoreSession(
   session = loadActiveSession(),
@@ -1364,6 +1407,19 @@ export default function App() {
       setPromotion(null)
       return
     }
+    if (promotion && !event.isComposing) {
+      const piece = promotionShortcutFor({
+        key: event.key,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+      })
+      if (piece && promotion.choices.includes(piece)) {
+        event.preventDefault()
+        choosePromotion(piece)
+        return
+      }
+    }
     if (tab !== 'play') return
     const element = event.target instanceof HTMLElement ? event.target : null
     const editable = Boolean(
@@ -2136,21 +2192,13 @@ export default function App() {
       </main>
 
       {promotion && (
-        <div className="modal" role="dialog" aria-modal="true" aria-labelledby="promotion-title">
-          <div className="modal-card">
-            <span className="eyebrow">{promotion.kind === 'premove' ? 'Premove promotion' : 'Pawn promotion'}</span>
-            <h2 id="promotion-title">{promotion.kind === 'premove' ? 'Queue a promotion' : 'Choose a piece'}</h2>
-            <div className="promotion-grid">
-              {promotion.choices.map((piece) => (
-                <button key={piece} type="button" onClick={() => choosePromotion(piece)}>
-                  <ChessPiece color={promotion.kind === 'premove' ? humanColor : game.turn()} type={piece} />
-                  <span>{promotionNames[piece] ?? piece.toUpperCase()}</span>
-                </button>
-              ))}
-            </div>
-            <button className="secondary-button" type="button" onClick={() => setPromotion(null)}>Cancel</button>
-          </div>
-        </div>
+        <PromotionDialog
+          kind={promotion.kind}
+          choices={promotion.choices}
+          color={promotion.kind === 'premove' ? humanColor : game.turn()}
+          onChoose={choosePromotion}
+          onCancel={() => { setSelected(null); setPromotion(null) }}
+        />
       )}
       {decision && <GameDecisionDialog decision={decision} onCancel={cancelDecision} onConfirm={confirmDecision} />}
       </div>

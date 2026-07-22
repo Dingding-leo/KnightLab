@@ -1,4 +1,5 @@
 export type GameShortcut = 'new-game' | 'undo' | 'flip' | 'cancel'
+export type PromotionShortcut = 'q' | 'r' | 'b' | 'n'
 
 export interface ShortcutInput {
   key: string
@@ -20,4 +21,11 @@ export function gameShortcutFor(input: ShortcutInput): GameShortcut | null {
   if (key === 'u') return 'undo'
   if (key === 'f') return 'flip'
   return null
+}
+
+/** Promotion is a short focused choice, not a reason to interrupt keyboard play. */
+export function promotionShortcutFor(input: Pick<ShortcutInput, 'key' | 'metaKey' | 'ctrlKey' | 'altKey'>): PromotionShortcut | null {
+  if (input.metaKey || input.ctrlKey || input.altKey) return null
+  const key = input.key.toLowerCase()
+  return key === 'q' || key === 'r' || key === 'b' || key === 'n' ? key : null
 }

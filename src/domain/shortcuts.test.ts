@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gameShortcutFor } from './shortcuts'
+import { gameShortcutFor, promotionShortcutFor } from './shortcuts'
 
 describe('gameShortcutFor', () => {
   it('maps the high-frequency play shortcuts', () => {
@@ -24,5 +24,16 @@ describe('gameShortcutFor', () => {
     expect(gameShortcutFor({ key: 'f', modalOpen: true })).toBeNull()
     expect(gameShortcutFor({ key: 'z', metaKey: true, modalOpen: true })).toBeNull()
     expect(gameShortcutFor({ key: 'z', ctrlKey: true, modalOpen: true })).toBeNull()
+  })
+
+  it('keeps direct promotion choices focused and leaves system shortcuts alone', () => {
+    expect(promotionShortcutFor({ key: 'Q' })).toBe('q')
+    expect(promotionShortcutFor({ key: 'r' })).toBe('r')
+    expect(promotionShortcutFor({ key: 'b' })).toBe('b')
+    expect(promotionShortcutFor({ key: 'n' })).toBe('n')
+    expect(promotionShortcutFor({ key: 'q', metaKey: true })).toBeNull()
+    expect(promotionShortcutFor({ key: 'q', ctrlKey: true })).toBeNull()
+    expect(promotionShortcutFor({ key: 'q', altKey: true })).toBeNull()
+    expect(promotionShortcutFor({ key: 'x' })).toBeNull()
   })
 })

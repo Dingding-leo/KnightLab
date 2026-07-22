@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Chess } from 'chess.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import App from './App'
+import App, { PromotionDialog } from './App'
 import { cloneGameAtPly } from './domain/chess'
 import { positionTransferFor } from './domain/positionTransfer'
 
@@ -217,5 +217,26 @@ describe('workspace handoff accessibility', () => {
 
     expect(markup).toContain('<main class="app-main" aria-labelledby="workspace-title">')
     expect(markup).toContain('<h1 id="workspace-title" tabindex="-1">Play</h1>')
+  })
+})
+
+describe('promotion keyboard convenience', () => {
+  it('focuses the natural promotion choice and exposes direct key choices', () => {
+    const markup = renderToStaticMarkup(
+      <PromotionDialog
+        kind="move"
+        choices={['q', 'r', 'b', 'n']}
+        color="w"
+        onChoose={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('aria-describedby="promotion-shortcuts"')
+    expect(markup).toContain('Press Q, R, B or N to choose Queen, Rook, Bishop or Knight. Press Escape to cancel.')
+    expect(markup).toContain('aria-keyshortcuts="Q"')
+    expect(markup).toContain('aria-keyshortcuts="R"')
+    expect(markup).toContain('aria-label="Queen; press Q"')
+    expect(markup.match(/autofocus=""/g)).toHaveLength(1)
   })
 })
