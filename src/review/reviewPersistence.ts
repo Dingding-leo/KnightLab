@@ -1,4 +1,4 @@
-import { createPgnTimeline, type AnalysisTimeline } from '../analysis/analysisModel'
+import { createPgnTimeline, type AnalysisMove, type AnalysisTimeline } from '../analysis/analysisModel'
 import type { GameReview } from './gameReviewRunner'
 import type { ReviewedMove } from './reviewModel'
 
@@ -35,6 +35,13 @@ export interface ReviewStorage {
   setItem(key: string, value: string): void
   removeItem(key: string): void
 }
+
+/**
+ * The canonical review identity intentionally needs only the move facts that
+ * define a chess main line. Callers that already own a verbose `chess.js`
+ * history can therefore create the same key without reparsing its PGN.
+ */
+export type ReviewKeyMove = Pick<AnalysisMove, 'color' | 'from' | 'to' | 'promotion'>
 
 function byteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength
@@ -167,11 +174,16 @@ function stableHash(input: string): string {
   return hash.toString(16).padStart(16, '0')
 }
 
-export function createReviewKey(timeline: Pick<AnalysisTimeline, 'startFen' | 'moves'>): string {
-  const line = timeline.moves
+export function createReviewKeyFromMoves(startFen: string, moves: readonly ReviewKeyMove[]): string {
+  const line = moves
     .map((move) => `${move.color}:${move.from}${move.to}${move.promotion ?? ''}`)
     .join('|')
-  return stableHash(`knightclub-review-v${REVIEW_SCHEMA_VERSION}\n${timeline.startFen}\n${line}`)
+  return stableHash(`knightclub-review-v${REVIEW_SCHEMA_VERSION}\n${startFen}\n${line}`)
+}
+
+/** Preserves the timeline-facing API while sharing the direct-history identity path. */
+export function createReviewKey(timeline: Pick<AnalysisTimeline, 'startFen' | 'moves'>): string {
+  return createReviewKeyFromMoves(timeline.startFen, timeline.moves)
 }
 
 function assertPersistableTimeline(timeline: AnalysisTimeline): asserts timeline is AnalysisTimeline & { source: 'pgn'; sourcePgn: string } {

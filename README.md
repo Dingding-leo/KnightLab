@@ -8,6 +8,8 @@ The first board paint is deliberately quiet: Stockfish and the KnightBot fallbac
 
 **Large private libraries:** Library searches and filters always consider the full local result set, then display the first 24 matching games with an explicit **Show more** control. This keeps opening and refining a 500-game history responsive without hiding older matching games; repeated text searches reuse each game's local search text.
 
+**Fast review completion:** A newly finished game receives its deterministic review link directly from the verbose move history already in memory. Older library games receive the same link only while their PGN is already being opened. Saving a completed review therefore updates matching lightweight library metadata without replaying every stored PGN on the UI thread.
+
 Play shortcuts: `N` starts a new game, `U` or `⌘/Ctrl+Z` undoes a turn, `F` flips the board and `Escape` cancels a selection, promotion or queued premove. Away from the board grid and text fields, `←` / `→` step through Play history, with the newest position returning to live play. A promotion chooser focuses Queen when it is offered and accepts `Q`, `R`, `B` or `N` for an immediate legal choice. When a confirmation or promotion dialog is open, only its own controls reach the paused game, so an unrelated shortcut cannot alter the position behind it.
 
 **Local PGN/FEN transfer:** Play offers **Copy PGN** and **Download PGN** for the current game, with immediate feedback beside its toolbar. Its **Position tools** offer **Copy current FEN** and **Download FEN**. Review accepts pasted notation or a deliberately selected local `.pgn`, `.fen` or `.txt` file through a keyboard-focusable picker. Transfer remains on-device; an unavailable Clipboard API safely falls back or reports a clear status, and a rejected or stale file import cannot replace the active Review timeline.
@@ -30,6 +32,10 @@ npm run dev
 ```
 
 Open the local address printed by Vite. The pinned Stockfish 18 Lite WebAssembly assets are prepared automatically and cached by production PWA builds for offline use.
+
+### Website publishing
+
+The public project page remains [https://dingding-leo.github.io/KnightLab/](https://dingding-leo.github.io/KnightLab/), hosted from `Dingding-leo/Dingding-leo.github.io` under `public/KnightLab`. Its publisher builds the canonical `Dingding-leo/KnightClub` source with `KNIGHTCLUB_BASE=/KnightLab/` and copies `dist/client`; this preserves the existing public path even though the source repository is named KnightClub.
 
 ### macOS desktop with Stockfish
 

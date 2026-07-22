@@ -14,6 +14,7 @@
 - Explicit Review waiting state while a live bot move owns the local engine
 - Lower default bot budgets across browser and desktop: Easy/Balanced/Strong now cap at 4k/10k/24k nodes and 50/100/160 ms while preserving one-threaded named-profile behavior and display pacing
 - Play notation now uses memoized move rows plus one delegated selection handler, so long histories update only affected rows as moves arrive or players preview a position
+- Finished games now write their canonical review key directly from the existing verbose move history, while legacy library records backfill it only when opened; completing a review updates matching metadata without replaying every stored PGN
 - Full-game Review now waits for a local saved-report lookup before it enables a costly rerun, and labels an intentional rerun clearly
 - Promotion dialogs now block Play shortcuts behind the modal while preserving Escape-to-cancel
 - Promotion choices now focus Queen when available and accept Q/R/B/N direct keyboard selection with explicit accessible key hints
@@ -86,6 +87,7 @@
 ### Changed
 
 - The KnightClub GitHub repository is now canonically `Dingding-leo/KnightClub`, matching the local package, desktop bundle and published metadata
+- The reproducible Sites build now uses a tracked static-worker source rather than a machine-local deployment helper
 - Revisiting an exact interactive Review position now returns a clearly labelled bounded local cache result instead of launching another Stockfish search; cache identity includes runtime, configured path, FEN and normalized settings, and full-game review remains uncached
 - Play now carries known verbose moves through human, bot and premove commits, uses a verified platform game-state snapshot for full current-position copies and retains start-FEN replay only as the safe fallback; historical previews still rebuild their requested prefix
 - Play, player bars, session status and Library now identify the selected named opponent instead of exposing a generic `balanced` technical label; Custom UCI settings explicitly disclose that they override the profile's default strength

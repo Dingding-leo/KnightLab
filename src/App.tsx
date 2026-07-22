@@ -33,7 +33,6 @@ import { BotProfilePicker } from './components/BotProfilePicker'
 import { ChessBoard } from './components/ChessBoard'
 import { ClockRuntime } from './components/ClockRuntime'
 import { useClockSnapshot } from './components/clockRuntimeContext'
-import { createPgnTimeline } from './analysis/analysisModel'
 import { EngineSettingsPanel, type EngineStatus } from './components/EngineSettingsPanel'
 import { GameDecisionDialog, type GameDecision } from './components/GameDecisionDialog'
 import { ChessPiece } from './components/ChessPiece'
@@ -136,6 +135,7 @@ import {
   clearLibrary,
   loadActiveSession,
   loadLibrary,
+  markLibraryGamesReviewed,
   loadPreferences,
   mergeLibraryGames,
   normalizePreferences,
@@ -147,7 +147,7 @@ import {
 } from './storage/gameStore'
 import { DatabaseClient } from './storage/databaseClient'
 import {
-  createReviewKey,
+  createReviewKeyFromMoves,
   loadBrowserReview,
   saveBrowserReview,
   type PersistedReview,
@@ -920,34 +920,23 @@ export default function App() {
     setRequestedPlayPreviewTarget(null)
   }, [])
 
-  const markLinkedGameReviewed = useCallback((review: PersistedReview) => {
-    const changed = library
-      .map((item) => {
-        try {
-          const timeline = createPgnTimeline(item.pgn)
-          if (createReviewKey(timeline) !== review.reviewKey) return item
-          return { ...item, reviewed: true, reviewKey: review.reviewKey }
-        } catch {
-          return item
-        }
-      })
-      .filter((item, index) => item !== library[index])
-
-    if (!changed.length) return
-    const changedIds = new Set(changed.map((item) => item.id))
-    const next = library.map((item) => changedIds.has(item.id)
-      ? changed.find((candidate) => candidate.id === item.id) ?? item
-      : item)
-    setLibrary(next)
-    for (const item of changed) {
-      if (database) {
-        if (databaseReady) void database.saveGame(item).catch(reportDatabaseError)
-        else pendingNativeGameSaves.current = mergeLibraryGames(pendingNativeGameSaves.current, [item])
-      } else {
-        updateGame(item)
-      }
+  const persistLibraryGameUpdate = useCallback((item: StoredGame) => {
+    if (database) {
+      if (databaseReady) void database.saveGame(item).catch(reportDatabaseError)
+      else pendingNativeGameSaves.current = mergeLibraryGames(pendingNativeGameSaves.current, [item])
+    } else {
+      updateGame(item)
     }
-  }, [database, databaseReady, library, reportDatabaseError])
+  }, [database, databaseReady, reportDatabaseError])
+
+  const markLinkedGameReviewed = useCallback((review: PersistedReview) => {
+    const { games, changedGames } = markLibraryGamesReviewed(library, review.reviewKey)
+    if (!changedGames.length) return
+    setLibrary(games)
+    for (const item of changedGames) {
+      persistLibraryGameUpdate(item)
+    }
+  }, [library, persistLibraryGameUpdate])
 
   const clearPersistedSession = () => {
     clearActiveSession()
@@ -1417,6 +1406,14 @@ export default function App() {
       const next = new Chess(); next.loadPgn(item.pgn)
       const restoredTermination = isGameTermination(item.termination) ? item.termination : null
       const restoredStartFen = next.getHeaders().FEN ?? STANDARD_START_FEN
+      const restoredVerbose = next.history({ verbose: true })
+      // A legacy library row obtains its canonical link while its PGN is
+      // already open. Later review completion can then update by metadata
+      // rather than replaying every stored game on the UI thread.
+      const canonicalReviewKey = createReviewKeyFromMoves(restoredStartFen, restoredVerbose)
+      const storedWithReviewKey = item.reviewKey === canonicalReviewKey
+        ? item
+        : { ...item, reviewKey: canonicalReviewKey }
       const control = isTimeControl(item.timeControl) ? item.timeControl : getTimeControl('unlimited')
       const restoredHumanColor: Color = item.humanColor === 'b' ? 'b' : 'w'
       const restoredColorChoice = isHumanColorChoice(item.colorChoice)
@@ -1430,12 +1427,18 @@ export default function App() {
         `${destination === 'review' ? 'Reviewing' : 'Opening'} this game replaces the ${history.length}-ply unfinished game.`,
         destination === 'review' ? 'Open review' : 'Open saved game',
         () => {
+          if (storedWithReviewKey !== item) {
+            setLibrary((current) => current.map((stored) => stored.id === item.id
+              ? { ...stored, reviewKey: canonicalReviewKey }
+              : stored))
+            persistLibraryGameUpdate(storedWithReviewKey)
+          }
           const now = Date.now()
           const restoredClock = newClock(control, next.turn())
           botRequestVersion.current += 1
           botClient.current?.cancel()
           clearPremove()
-          setGame(next); setStartFen(restoredStartFen); setPreviewPly(null)
+          setGame(next, restoredVerbose); setStartFen(restoredStartFen); setPreviewPly(null)
           customTimeDraft.current = customTimeDraftFor(control)
           setCustomTimeOpen(control.category === 'custom')
           setTimeControl(control); setClock(next.isGameOver() || restoredTermination ? pauseClock(restoredClock, now) : restoredClock)
@@ -1681,6 +1684,7 @@ export default function App() {
       botProfileId: mode === 'bot' ? botProfileId : undefined,
       result: currentResult, pgn: sharePgn,
       finalFen: game.fen(), moveCount: history.length,
+      reviewKey: createReviewKeyFromMoves(startFen, verbose),
       timeControl, whiteTimeMs: terminalClock.whiteMs, blackTimeMs: terminalClock.blackMs,
       termination: termination ?? undefined,
       ...(mode === 'bot' ? { humanColor, colorChoice } : {}),
@@ -1693,7 +1697,7 @@ export default function App() {
       setLibrary(saveGame(item))
     }
     savedPosition.current = terminalFingerprint
-  }, [game, mode, botLevel, botProfileId, humanColor, colorChoice, gameFinished, currentResult, sharePgn, history.length, timeControl, clock, termination, database, databaseReady, reportDatabaseError])
+  }, [game, startFen, verbose, mode, botLevel, botProfileId, humanColor, colorChoice, gameFinished, currentResult, sharePgn, history.length, timeControl, clock, termination, database, databaseReady, reportDatabaseError])
 
   useEffect(() => {
     const client = new HybridEngineClient()

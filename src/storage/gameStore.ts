@@ -150,6 +150,32 @@ export function mergeLibraryGames(
     .slice(0, MAX_GAMES)
 }
 
+export interface MarkLibraryReviewedResult {
+  /** Keeps non-matching records referentially stable for memoized Library views. */
+  games: StoredGame[]
+  /** Only records whose visible review status actually changed. */
+  changedGames: StoredGame[]
+}
+
+/**
+ * Marks records that already carry the canonical review identity. This is
+ * deliberately a single pass over lightweight metadata: it never opens or
+ * parses stored PGN text on the UI thread.
+ */
+export function markLibraryGamesReviewed(
+  games: readonly StoredGame[],
+  reviewKey: string,
+): MarkLibraryReviewedResult {
+  const changedGames: StoredGame[] = []
+  const nextGames = games.map((game) => {
+    if (game.reviewKey !== reviewKey || game.reviewed) return game
+    const next = { ...game, reviewed: true }
+    changedGames.push(next)
+    return next
+  })
+  return { games: nextGames, changedGames }
+}
+
 function safeParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback
   try {

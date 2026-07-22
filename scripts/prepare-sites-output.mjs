@@ -16,7 +16,7 @@ const workerConfiguration = {
 
 await mkdir(serverDirectory, { recursive: true })
 await copyFile(
-  join(projectRoot, 'worker', 'static-site.js'),
+  join(projectRoot, 'scripts', 'static-site-worker.js'),
   join(serverDirectory, 'index.js'),
 )
 await writeFile(

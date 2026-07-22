@@ -8,6 +8,7 @@
     "dev": "vite",
     "prebuild": "npm run sync:stockfish",
     "build": "tsc -b && vite build && node scripts/prepare-sites-output.mjs",
+    "build:pages": "npm run sync:stockfish && tsc -b && vite build",
     "sync:stockfish": "node scripts/sync-stockfish.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

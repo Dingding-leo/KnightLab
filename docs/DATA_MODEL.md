@@ -3,7 +3,7 @@
 ## Current persisted records
 
 - Active session: start FEN, result-aware PGN, game mode, bot level, optional named `botProfileId`, orientation, optional resolved human colour (`w`/`b`) and requested colour choice (White/Black/Random), optional time control, current clock, pre-move clock history and optional typed termination.
-- Completed game: ID, timestamp, mode, optional bot level and named `botProfileId`, result, result-aware PGN, final FEN, ply count, optional resolved human colour and requested colour choice for bot games, optional time control, final clock values, optional typed termination and optional reviewed/review-key linkage.
+- Completed game: ID, timestamp, mode, optional bot level and named `botProfileId`, result, result-aware PGN, final FEN, ply count, optional resolved human colour and requested colour choice for bot games, optional time control, final clock values, optional typed termination and optional reviewed/review-key linkage. New terminal records derive the key from their existing verbose move history; legacy rows backfill it only when opened.
 - Completed review: schema version, deterministic review key, canonical source PGN/start FEN, main-line ply count, completion timestamp and the finished GameReview report.
 - Retry item: schema version, `reviewKey + sourcePly` identity, independently validated pre-move FEN and side to move, reviewed/recorded move facts, a short recorded line, classification/focus, attempt state and next due timestamp. It is a self-contained practice prompt rather than a foreign-key-dependent view of a report.
 - Tactics progress: one bounded record per original local puzzle revision, with attempts, streak, last outcome, assistance marker and next-due timestamp. It contains no solution line.

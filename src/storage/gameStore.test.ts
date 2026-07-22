@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { mergeLibraryGames, normalizeActiveSession, normalizeLibrary } from './gameStore'
+import {
+  markLibraryGamesReviewed,
+  mergeLibraryGames,
+  normalizeActiveSession,
+  normalizeLibrary,
+} from './gameStore'
 
 const validGame = {
   id: 'game-1',
@@ -72,6 +77,27 @@ describe('game library normalization', () => {
       current[0],
       native[1],
     ])
+  })
+
+  it('marks only matching precomputed review keys without touching a large library\'s PGNs', () => {
+    const reviewKey = '0123456789abcdef'
+    const games = Array.from({ length: 500 }, (_, index) => ({
+      ...validGame,
+      id: `game-${index}`,
+      // Deliberately not valid notation: this metadata-only path must never
+      // parse a stored game just to reflect a completed review.
+      pgn: `not-a-pgn-${index}`,
+      reviewKey: index === 24 || index === 499 ? reviewKey : 'fedcba9876543210',
+      reviewed: index === 499,
+    }))
+
+    const result = markLibraryGamesReviewed(games, reviewKey)
+
+    expect(result.games).toHaveLength(500)
+    expect(result.changedGames).toEqual([{ ...games[24], reviewed: true }])
+    expect(result.games[24]).toEqual({ ...games[24], reviewed: true })
+    expect(result.games[499]).toBe(games[499])
+    expect(result.games[0]).toBe(games[0])
   })
 })
 

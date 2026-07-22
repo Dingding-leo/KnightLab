@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { Chess } from 'chess.js'
 import { createPgnTimeline } from '../analysis/analysisModel'
 import type { GameReview } from './gameReviewRunner'
 import {
   assertPersistedReview,
   createPersistedReview,
   createReviewKey,
+  createReviewKeyFromMoves,
   loadBrowserReview,
   saveBrowserReview,
 } from './reviewPersistence'
@@ -45,6 +47,25 @@ describe('persisted review identity and browser storage', () => {
     const changed = createPgnTimeline('1. e4 c5 2. Nf3 *')
     expect(createReviewKey(first)).toBe(createReviewKey(same))
     expect(createReviewKey(first)).not.toBe(createReviewKey(changed))
+  })
+
+  it('creates the same canonical key directly from minimal move facts, including promotion', () => {
+    const timeline = createPgnTimeline('[SetUp "1"]\n[FEN "7k/P7/8/8/8/8/8/7K w - - 0 1"]\n\n1. a8=Q+ *')
+    const minimalMoves = timeline.moves.map(({ color, from, to, promotion }) => ({ color, from, to, promotion }))
+
+    expect(createReviewKeyFromMoves(timeline.startFen, minimalMoves)).toBe(createReviewKey(timeline))
+    expect(createReviewKeyFromMoves(timeline.startFen, minimalMoves)).not.toBe(
+      createReviewKeyFromMoves(timeline.startFen, minimalMoves.map((move) => ({ ...move, promotion: undefined }))),
+    )
+  })
+
+  it('accepts the verbose chess.js history used when a finished game enters the library', () => {
+    const startFen = '7k/P7/8/8/8/8/8/7K w - - 0 1'
+    const game = new Chess(startFen)
+    game.move({ from: 'a7', to: 'a8', promotion: 'q' })
+    const timeline = createPgnTimeline(game.pgn())
+
+    expect(createReviewKeyFromMoves(startFen, game.history({ verbose: true }))).toBe(createReviewKey(timeline))
   })
 
   it('round-trips a versioned report through bounded browser storage and ignores malformed data', () => {
