@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Chess } from 'chess.js'
-import { cloneGame, cloneGameAtPly, evaluateMaterial, gameResult, gameStatus } from './chess'
+import { cloneGame, cloneGameAtPly, evaluateMaterial, gameResult, gameStatus, onlyLegalMove, previewGameAtPly } from './chess'
 
 describe('chess domain', () => {
   it('clones move history and current position', () => {
@@ -91,12 +91,55 @@ describe('chess domain', () => {
     moveSpy.mockRestore()
   })
 
+  it('uses the stored historical FEN for a read-only preview without replaying moves', () => {
+    const game = new Chess()
+    for (const move of ['e4', 'e6', 'e5', 'd5', 'exd6', 'Bxd6', 'Nf3', 'Nf6', 'Be2', 'O-O', 'O-O', 'Re8']) {
+      game.move(move)
+    }
+    const verbose = game.history({ verbose: true })
+    const moveSpy = vi.spyOn(Chess.prototype, 'move')
+
+    const enPassantPreview = previewGameAtPly(new Chess().fen(), verbose, 5)
+    const castledPreview = previewGameAtPly(new Chess().fen(), verbose, 11)
+
+    expect(moveSpy).not.toHaveBeenCalled()
+    expect(enPassantPreview.fen()).toBe(verbose[4].after)
+    expect(castledPreview.fen()).toBe(verbose[10].after)
+    expect(enPassantPreview.history()).toEqual([])
+    expect(castledPreview.history()).toEqual([])
+    moveSpy.mockRestore()
+  })
+
+  it('falls back to the verified prefix replay when a read-only preview FEN is invalid', () => {
+    const game = new Chess()
+    game.move('e4')
+    game.move('e5')
+    const verbose = game.history({ verbose: true })
+    const invalidHistory = [{ ...verbose[0], after: 'not a FEN' } as unknown as (typeof verbose)[number], verbose[1]]
+    const moveSpy = vi.spyOn(Chess.prototype, 'move')
+
+    const preview = previewGameAtPly(new Chess().fen(), invalidHistory, 1)
+
+    expect(moveSpy).toHaveBeenCalledOnce()
+    expect(preview.fen()).toBe(verbose[0].after)
+    expect(preview.history()).toEqual(['e4'])
+    moveSpy.mockRestore()
+  })
+
   it('evaluates captured material from white perspective', () => {
     const game = new Chess()
     game.move('e4')
     game.move('d5')
     game.move('exd5')
     expect(evaluateMaterial(game, 'w')).toBe(100)
+  })
+
+  it('returns the only legal reply without asking an engine to choose one', () => {
+    const forced = new Chess('7k/6Q1/8/8/8/8/6K1/8 b - - 0 1')
+
+    expect(forced.moves()).toEqual(['Kxg7'])
+    expect(onlyLegalMove(forced)).toEqual({ from: 'h8', to: 'g7' })
+    expect(onlyLegalMove(new Chess())).toBeNull()
   })
 
   it('reports checkmate result and status', () => {

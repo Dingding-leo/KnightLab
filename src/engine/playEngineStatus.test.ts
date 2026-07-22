@@ -14,10 +14,14 @@ describe('Play engine status feedback', () => {
     })
   })
 
-  it('does not claim a local opening cue verified Stockfish', () => {
+  it('does not claim a local no-engine move verified Stockfish', () => {
     expect(playEngineStatusUpdate({
       provider: 'opening-cue',
       engineName: 'Local opening cue',
+    })).toBeNull()
+    expect(playEngineStatusUpdate({
+      provider: 'forced-move',
+      engineName: 'Local rules',
     })).toBeNull()
   })
 

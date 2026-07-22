@@ -42,7 +42,6 @@ import { PlayPreviewNavigation } from './components/PlayPreviewNavigation'
 import type { TacticsSprintResult } from './components/TacticsSprint'
 import {
   cloneGame,
-  cloneGameAtPly,
   completedPgn,
   evaluateMaterial,
   formatEvaluation,
@@ -50,6 +49,7 @@ import {
   gameStatus,
   hasMatingMaterial,
   legalMovesFrom,
+  previewGameAtPly,
   STANDARD_START_FEN,
   type BotLevel,
   type GameMode,
@@ -117,6 +117,7 @@ import {
 import { HybridEngineClient, isTauriRuntime, type EngineSearchResult } from './engine/stockfishClient'
 import { engineSettingsLabel, normalizeEngineSettings } from './engine/engineSettings'
 import { playEngineFailureStatus, playEngineStatusUpdate } from './engine/playEngineStatus'
+import { requestPlayMove } from './engine/playMoveRequest'
 import {
   DEFAULT_BOT_PROFILE_ID,
   botOpeningReaction,
@@ -609,7 +610,7 @@ export default function App() {
   const history = useMemo(() => verbose.map((move) => move.san), [verbose])
   const previewing = previewPly !== null
   const previewGame = useMemo(
-    () => previewPly === null ? game : cloneGameAtPly(startFen, verbose, previewPly, game),
+    () => previewPly === null ? game : previewGameAtPly(startFen, verbose, previewPly),
     [game, previewPly, startFen, verbose],
   )
   const positionTransfer = useMemo(
@@ -1720,9 +1721,9 @@ export default function App() {
     const requestFen = game.fen()
     const version = ++botRequestVersion.current
     const requestedAt = Date.now()
-    // A matching local cue is a real legal move, not a text overlay. It avoids
-    // spinning up Stockfish for the opening route and falls straight back to a
-    // bounded engine search when the game leaves that exact route.
+    // A matching local cue is a real legal move, not a text overlay. Preserve
+    // that authored opening path before checking whether the rules leave only
+    // one reply; either local path avoids starting Stockfish.
     const openingMove = selectProfileOpeningMove(game, startFen, botColor, botProfile)
     let pacingTimer: ReturnType<typeof window.setTimeout> | null = null
     let releasePacing: (() => void) | null = null
@@ -1740,15 +1741,11 @@ export default function App() {
     })
     setThinking(true)
 
-    const moveRequest: Promise<EngineSearchResult> = openingMove
-      ? Promise.resolve({
-        move: openingMove,
-        ponder: null,
-        candidates: [],
-        provider: 'opening-cue',
-        engineName: 'Local opening cue',
-      })
-      : client.search(requestFen, botLevel, engineSettings, botProfile.candidateCount)
+    const moveRequest: Promise<EngineSearchResult> = requestPlayMove({
+      game,
+      openingMove,
+      search: () => client.search(requestFen, botLevel, engineSettings, botProfile.candidateCount),
+    })
 
     void moveRequest.then(async (result) => {
       if (version !== botRequestVersion.current) return
@@ -1760,6 +1757,9 @@ export default function App() {
       } else if (result.provider === 'opening-cue') {
         setEngineName(desktop ? 'Stockfish' : 'Stockfish 18 Lite')
         setEngineDetail('Local opening cue · engine stays idle')
+      } else if (result.provider === 'forced-move') {
+        setEngineName(desktop ? 'Stockfish' : 'Stockfish 18 Lite')
+        setEngineDetail('Local rules · only legal move · engine stays idle')
       } else {
         setEngineName('KnightBot')
         setEngineDetail('Local fallback')

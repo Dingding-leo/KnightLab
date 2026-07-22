@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  AnalysisMoveList,
+  AnalysisMovePicker,
   AnalysisWorkspace,
   CoachEvidenceCard,
   LiveGameContinuationNotice,
@@ -13,6 +15,7 @@ import { resolvePlayPreviewReviewPly } from '../review/playPreviewReviewTarget'
 import { liveGameContinuation } from '../review/liveGameContinuation'
 import type { CoachGuidance } from '../review/coach'
 import { saveCompletedReviewInBackground } from '../review/backgroundReviewSave'
+import type { GameReview } from '../review/gameReviewRunner'
 import type { PersistedReview } from '../review/reviewPersistence'
 import type { RetryItem } from '../review/retry'
 import { saveRetryItemsSerially } from '../review/retryQueuePersistence'
@@ -56,6 +59,39 @@ function retryItem(retryKey: string): RetryItem {
 }
 
 describe('analysis workspace convenience contracts', () => {
+  it('keeps Review notation and the mobile move picker addressable without per-control callbacks', () => {
+    const timeline = createPgnTimeline('1. e4 e5 2. Nf3 Nc6')
+    const [e4, e5, knightF3, knightC6] = timeline.moves
+    const moveRows = [
+      { number: 1, white: e4, black: e5 },
+      { number: 2, white: knightF3, black: knightC6 },
+    ]
+    const review = {
+      moves: timeline.moves.map((move) => ({
+        ply: move.ply,
+        classification: move.ply === knightF3.ply ? 'mistake' : 'best',
+      })),
+    } as unknown as GameReview
+
+    const notation = renderToStaticMarkup(
+      <AnalysisMoveList moveRows={moveRows} ply={knightF3.ply} review={review} onSelectPly={vi.fn()} />,
+    )
+    const picker = renderToStaticMarkup(
+      <AnalysisMovePicker moves={timeline.moves} ply={knightF3.ply} onSelectPly={vi.fn()} />,
+    )
+
+    expect(notation).toContain('class="analysis-moves" aria-label="Game moves"')
+    expect(notation.match(/data-ply="/g)).toHaveLength(5)
+    expect(notation).toContain('data-ply="0"')
+    expect(notation).toContain('data-ply="3"')
+    expect(notation).toContain('aria-current="step"')
+    expect(notation).toContain('review-badge--mistake')
+    expect(picker).toContain('class="analysis-mobile-move-picker"')
+    expect(picker).toContain('aria-label="Jump to a game position"')
+    expect(picker).toContain('<option value="0">Start position</option>')
+    expect(picker).toContain('<option value="3" selected="">2. Nf3</option>')
+  })
+
   it('offers a user-initiated update when the live game safely extends Review', () => {
     const review = createPgnTimeline('1. e4 e5 2. Nf3')
     const live = createPgnTimeline('1. e4 e5 2. Nf3 Nc6')

@@ -34,8 +34,8 @@ export interface EngineSearchResult {
   ponder: MoveInput | null
   /** Alternatives from the same bounded search, never a separate engine call. */
   candidates: EngineCandidate[]
-  /** `opening-cue` is authored and validated in Play before an engine search begins. */
-  provider: 'stockfish' | 'knightbot' | 'opening-cue'
+  /** Local providers are rules-validated in Play and do not start an engine search. */
+  provider: 'stockfish' | 'knightbot' | 'opening-cue' | 'forced-move'
   engineName: string
   enginePath?: string
   elapsedMs?: number

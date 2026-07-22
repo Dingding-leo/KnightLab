@@ -133,6 +133,38 @@ export function cloneGameAtPly(
   return clone
 }
 
+/**
+ * Create a display-only historical position without replaying its prefix.
+ *
+ * Verbose chess.js moves carry the exact FEN after each legal move. Play's
+ * history preview only reads that position (board, material and transfers),
+ * so it does not need the expensive undo/PGN history that cloneGameAtPly
+ * preserves. Invalid or externally supplied FEN data still takes the proven
+ * replay route, keeping imported timelines safe.
+ */
+export function previewGameAtPly(
+  startFen: string,
+  verboseHistory: readonly Move[],
+  ply: number,
+): Chess {
+  const requestedPly = Number.isFinite(ply) ? Math.trunc(ply) : 0
+  const boundedPly = Math.max(0, Math.min(verboseHistory.length, requestedPly))
+  const positionFen = boundedPly === 0
+    ? startFen
+    : verboseHistory[boundedPly - 1]?.after
+
+  if (positionFen) {
+    try {
+      const preview = new Chess(positionFen)
+      if (preview.fen() === positionFen) return preview
+    } catch {
+      // Imported histories can carry stale or malformed FEN. Replay below.
+    }
+  }
+
+  return cloneGameAtPly(startFen, verboseHistory, boundedPly)
+}
+
 export function evaluateMaterial(game: Chess, perspective: Color = 'w'): number {
   let score = 0
   for (const rank of game.board()) {
@@ -188,6 +220,16 @@ export function legalMovesFrom(game: Chess, square: Square): Move[] {
 
 export function moveToInput(move: Move): MoveInput {
   return { from: move.from, to: move.to, promotion: move.promotion }
+}
+
+/**
+ * Returns the rules-proven reply when a side has exactly one legal move.
+ * Callers can skip engine work in this case because no search result could
+ * alter the move while retaining standard chess legality.
+ */
+export function onlyLegalMove(game: Chess): MoveInput | null {
+  const moves = game.moves({ verbose: true })
+  return moves.length === 1 ? moveToInput(moves[0]) : null
 }
 
 export function formatEvaluation(score: number): string {

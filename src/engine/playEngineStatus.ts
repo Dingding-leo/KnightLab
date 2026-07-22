@@ -9,12 +9,13 @@ export type PlayEngineStatusUpdate =
   | null
 
 /**
- * Opening cues deliberately skip Stockfish, so they leave the configured
- * engine status alone. A real Stockfish response proves the configured engine
- * was usable; a fallback means the old ready label must not remain visible.
+ * Opening cues and rules-proven forced replies deliberately skip Stockfish,
+ * so they leave the configured engine status alone. A real Stockfish response
+ * proves the configured engine was usable; a fallback means the old ready
+ * label must not remain visible.
  */
 export function playEngineStatusUpdate(result: PlaySearchIdentity): PlayEngineStatusUpdate {
-  if (result.provider === 'opening-cue') return null
+  if (result.provider === 'opening-cue' || result.provider === 'forced-move') return null
   if (result.provider === 'knightbot') {
     return {
       kind: 'error',

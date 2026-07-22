@@ -1,4 +1,14 @@
-import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type MouseEvent,
+} from 'react'
 import { Chess } from 'chess.js'
 import {
   BarChart3,
@@ -111,6 +121,12 @@ interface AnalysisMoveListProps {
   moveRows: readonly AnalysisMoveRow[]
   ply: number
   review: GameReview | null
+  onSelectPly: (ply: number) => void
+}
+
+interface AnalysisMovePickerProps {
+  moves: readonly AnalysisTimeline['moves'][number][]
+  ply: number
   onSelectPly: (ply: number) => void
 }
 
@@ -235,26 +251,131 @@ const classificationLabels: Record<MoveClassification, string> = {
   forced: 'Forced',
 }
 
-function ReviewBadge({ move }: { move?: ReviewedMove }) {
+const ReviewBadge = memo(function ReviewBadge({ move }: { move?: ReviewedMove }) {
   if (!move) return null
   return <em className={`review-badge review-badge--${move.classification}`}>{classificationLabels[move.classification]}</em>
+})
+
+interface AnalysisMoveRowProps {
+  row: AnalysisMoveRow
+  whiteCurrent: boolean
+  blackCurrent: boolean
+  whiteReview?: ReviewedMove
+  blackReview?: ReviewedMove
 }
+
+/** A notation row changes only when one of its own buttons or badges changes. */
+const AnalysisMoveRow = memo(function AnalysisMoveRow({
+  row,
+  whiteCurrent,
+  blackCurrent,
+  whiteReview,
+  blackReview,
+}: AnalysisMoveRowProps) {
+  return (
+    <div className="analysis-move-row">
+      <span>{row.number}.</span>
+      {row.white && (
+        <button
+          type="button"
+          data-ply={row.white.ply}
+          className={whiteCurrent ? 'is-current' : ''}
+          aria-current={whiteCurrent ? 'step' : undefined}
+        >
+          {row.white.san}<ReviewBadge move={whiteReview} />
+        </button>
+      )}
+      {row.black && (
+        <button
+          type="button"
+          data-ply={row.black.ply}
+          className={blackCurrent ? 'is-current' : ''}
+          aria-current={blackCurrent ? 'step' : undefined}
+        >
+          {row.black.san}<ReviewBadge move={blackReview} />
+        </button>
+      )}
+    </div>
+  )
+})
+
+/**
+ * The mobile picker changes value while navigating, but its option text is
+ * immutable for a loaded timeline. Isolate those options so a long game does
+ * not rebuild them for every Review progress update or arrow-key step.
+ */
+const AnalysisMovePickerOptions = memo(function AnalysisMovePickerOptions({
+  moves,
+}: Pick<AnalysisMovePickerProps, 'moves'>) {
+  return (
+    <>
+      <option value={0}>Start position</option>
+      {moves.map((move) => (
+        <option key={move.ply} value={move.ply}>
+          {move.moveNumber}{move.color === 'b' ? '…' : '.'} {move.san}
+        </option>
+      ))}
+    </>
+  )
+})
+
+export const AnalysisMovePicker = memo(function AnalysisMovePicker({ moves, ply, onSelectPly }: AnalysisMovePickerProps) {
+  const onSelectPlyRef = useRef(onSelectPly)
+  useLayoutEffect(() => {
+    onSelectPlyRef.current = onSelectPly
+  }, [onSelectPly])
+
+  const selectPly = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    const nextPly = Number(event.target.value)
+    if (!Number.isInteger(nextPly) || nextPly < 0 || nextPly > moves.length) return
+    onSelectPlyRef.current(nextPly)
+  }, [moves.length])
+
+  return (
+    <label className="analysis-mobile-move-picker">
+      <span>Jump to move</span>
+      <select aria-label="Jump to a game position" value={ply} onChange={selectPly}>
+        <AnalysisMovePickerOptions moves={moves} />
+      </select>
+    </label>
+  )
+})
 
 /**
  * A full review reports progress before and after every ply. Keep the long
- * notation list out of those progress-only renders; it only needs to update
- * when navigation or final review data actually changes.
+ * notation list out of those progress-only renders. During navigation, rows
+ * retain their stable move and review references so only the old and new
+ * current rows need to render again.
  */
-const AnalysisMoveList = memo(function AnalysisMoveList({ moveRows, ply, review, onSelectPly }: AnalysisMoveListProps) {
+export const AnalysisMoveList = memo(function AnalysisMoveList({ moveRows, ply, review, onSelectPly }: AnalysisMoveListProps) {
+  const onSelectPlyRef = useRef(onSelectPly)
+  const finalRow = moveRows.at(-1)
+  const maxPly = finalRow?.black?.ply ?? finalRow?.white?.ply ?? 0
+  useLayoutEffect(() => {
+    onSelectPlyRef.current = onSelectPly
+  }, [onSelectPly])
+
+  const selectPlyFromNotation = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof Element)) return
+    const button = event.target.closest<HTMLButtonElement>('button[data-ply]')
+    if (!button || !event.currentTarget.contains(button)) return
+    const nextPly = Number(button.dataset.ply)
+    if (!Number.isInteger(nextPly) || nextPly < 0 || nextPly > maxPly) return
+    onSelectPlyRef.current(nextPly)
+  }, [maxPly])
+
   return (
-    <div className="analysis-moves" aria-label="Game moves">
-      <button type="button" className={ply === 0 ? 'is-current' : ''} aria-current={ply === 0 ? 'step' : undefined} onClick={() => onSelectPly(0)}>Start position</button>
+    <div className="analysis-moves" aria-label="Game moves" onClick={selectPlyFromNotation}>
+      <button type="button" data-ply={0} className={ply === 0 ? 'is-current' : ''} aria-current={ply === 0 ? 'step' : undefined}>Start position</button>
       {moveRows.map((row) => (
-        <div className="analysis-move-row" key={row.number}>
-          <span>{row.number}.</span>
-          {row.white && <button type="button" className={ply === row.white.ply ? 'is-current' : ''} aria-current={ply === row.white.ply ? 'step' : undefined} onClick={() => onSelectPly(row.white!.ply)}>{row.white.san}<ReviewBadge move={review?.moves[row.white.ply - 1]} /></button>}
-          {row.black && <button type="button" className={ply === row.black.ply ? 'is-current' : ''} aria-current={ply === row.black.ply ? 'step' : undefined} onClick={() => onSelectPly(row.black!.ply)}>{row.black.san}<ReviewBadge move={review?.moves[row.black.ply - 1]} /></button>}
-        </div>
+        <AnalysisMoveRow
+          key={row.number}
+          row={row}
+          whiteCurrent={ply === row.white?.ply}
+          blackCurrent={ply === row.black?.ply}
+          whiteReview={row.white ? review?.moves[row.white.ply - 1] : undefined}
+          blackReview={row.black ? review?.moves[row.black.ply - 1] : undefined}
+        />
       ))}
     </div>
   )
@@ -929,19 +1050,7 @@ export function AnalysisWorkspace({
 
         <LiveGameContinuationNotice continuation={liveContinuation} onUpdate={loadCurrentGame} />
 
-        {timeline.moves.length > 0 && (
-          <label className="analysis-mobile-move-picker">
-            <span>Jump to move</span>
-            <select aria-label="Jump to a game position" value={ply} onChange={(event) => setPly(Number(event.target.value))}>
-              <option value={0}>Start position</option>
-              {timeline.moves.map((move) => (
-                <option key={move.ply} value={move.ply}>
-                  {move.moveNumber}{move.color === 'b' ? '…' : '.'} {move.san}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        {timeline.moves.length > 0 && <AnalysisMovePicker moves={timeline.moves} ply={ply} onSelectPly={setPly} />}
 
         <section className="analysis-transfer" aria-label="Copy or download current analysis">
           <div>
