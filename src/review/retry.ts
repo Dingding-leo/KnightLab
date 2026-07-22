@@ -68,11 +68,32 @@ export interface CreateRetryItemInput {
 type UciMove = RetryMoveInput
 
 interface VerifiedTimelineMove {
+  ply: number
   preFen: string
-  source: AnalysisMove
+  moveNumber: number
+  color: Color
+  san: string
+  from: Square
+  to: Square
   playedMoveUci: string
   playedMoveSan: string
 }
+
+/**
+ * A private, immutable snapshot of a full timeline replay. It lets a Review
+ * screen reuse one strict validation while a player moves its cursor or opens
+ * several practice prompts. The module-private registry makes a structural
+ * lookalike fail closed at runtime.
+ */
+export interface VerifiedRetryTimeline {
+  readonly moves: readonly Readonly<VerifiedTimelineMove>[]
+}
+
+export interface CreateRetryItemFromVerifiedTimelineInput extends Omit<CreateRetryItemInput, 'timeline'> {
+  verifiedTimeline: VerifiedRetryTimeline
+}
+
+const verifiedRetryTimelines = new WeakSet<VerifiedRetryTimeline>()
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -210,18 +231,16 @@ function matchesTimelinePosition(
     && value.lastMove.to === lastMove.to
 }
 
-function verifyTimelineMove(
+function verifyTimeline(
   timeline: Pick<AnalysisTimeline, 'startFen' | 'positions' | 'moves'>,
-  reviewed: ReviewedMove,
-): VerifiedTimelineMove | null {
+): readonly VerifiedTimelineMove[] | null {
   if (!timeline
     || !isBoundedString(timeline.startFen, 1, MAX_FEN_BYTES)
     || !Array.isArray(timeline.moves)
     || !Array.isArray(timeline.positions)
     || timeline.moves.length === 0
     || timeline.moves.length > MAX_RETRY_PLIES
-    || timeline.positions.length !== timeline.moves.length + 1
-    || !isBoundedInteger(reviewed?.ply, 1, timeline.moves.length)) return null
+    || timeline.positions.length !== timeline.moves.length + 1) return null
 
   let game: Chess
   try {
@@ -232,7 +251,7 @@ function verifyTimelineMove(
   if (game.fen() !== timeline.startFen) return null
   if (!matchesTimelinePosition(timeline.positions[0], 0, game, null)) return null
 
-  let verified: VerifiedTimelineMove | null = null
+  const verified: VerifiedTimelineMove[] = []
   for (const [index, source] of timeline.moves.entries()) {
     if (!isTimelineMove(source, index, game)) return null
     const candidate = sourceUci(source)
@@ -251,22 +270,62 @@ function verifyTimelineMove(
         { from: applied.from, to: applied.to },
       )) return null
 
-    if (index === reviewed.ply - 1) {
-      if (reviewed.moveNumber !== source.moveNumber
-        || reviewed.color !== source.color
-        || reviewed.san !== source.san
-        || reviewed.from !== source.from
-        || reviewed.to !== source.to) return null
-      verified = {
-        preFen,
-        source,
-        playedMoveUci: uci(candidate),
-        playedMoveSan: applied.san,
-      }
-    }
+    verified.push({
+      ply: index + 1,
+      preFen,
+      moveNumber: source.moveNumber,
+      color: source.color,
+      san: source.san,
+      from: source.from,
+      to: source.to,
+      playedMoveUci: uci(candidate),
+      playedMoveSan: applied.san,
+    })
   }
 
   return verified
+}
+
+function verifiedMoveForReview(
+  moves: readonly VerifiedTimelineMove[],
+  reviewed: ReviewedMove,
+): VerifiedTimelineMove | null {
+  if (!isBoundedInteger(reviewed?.ply, 1, moves.length)) return null
+  const verified = moves[reviewed.ply - 1]
+  if (!verified
+    || reviewed.moveNumber !== verified.moveNumber
+    || reviewed.color !== verified.color
+    || reviewed.san !== verified.san
+    || reviewed.from !== verified.from
+    || reviewed.to !== verified.to) return null
+  return verified
+}
+
+function verifyTimelineMove(
+  timeline: Pick<AnalysisTimeline, 'startFen' | 'positions' | 'moves'>,
+  reviewed: ReviewedMove,
+): VerifiedTimelineMove | null {
+  const moves = verifyTimeline(timeline)
+  return moves ? verifiedMoveForReview(moves, reviewed) : null
+}
+
+/**
+ * Performs the existing complete fail-closed replay once, then detaches the
+ * verified facts from the mutable import object. This is intentionally opt-in:
+ * `createRetryItem()` retains its standalone strict replay contract for all
+ * external callers and persistence boundaries.
+ */
+export function createVerifiedRetryTimeline(
+  timeline: Pick<AnalysisTimeline, 'startFen' | 'positions' | 'moves'>,
+): VerifiedRetryTimeline | null {
+  const moves = verifyTimeline(timeline)
+  if (!moves) return null
+
+  const snapshot: VerifiedRetryTimeline = Object.freeze({
+    moves: Object.freeze(moves.map((move) => Object.freeze({ ...move }))),
+  })
+  verifiedRetryTimelines.add(snapshot)
+  return snapshot
 }
 
 function retryStatusForStreak(correctStreak: number): RetryStatus {
@@ -316,19 +375,17 @@ export function createRetryKey(reviewKey: string, sourcePly: number): string {
   return `${reviewKey}:${sourcePly}`
 }
 
-/**
- * Converts one fully reviewed adverse move into a durable, engine-free retry
- * prompt. Any mismatch in the replay data returns null instead of making a
- * best-effort exercise from untrusted review data.
- */
-export function createRetryItem(input: CreateRetryItemInput): RetryItem | null {
+/** Builds a durable retry item only after its source move facts are verified. */
+function createRetryItemFromVerifiedMove(
+  input: Pick<CreateRetryItemInput, 'move' | 'reviewKey' | 'guidance' | 'now'> | null | undefined,
+  verified: VerifiedTimelineMove | null,
+): RetryItem | null {
   if (!input
     || !ERROR_CLASSIFICATIONS.has(input.move?.classification)
     || input.move.isBestMove !== false
     || input.move.confidence !== 'normal'
     || !REVIEW_KEY_PATTERN.test(input.reviewKey)) return null
 
-  const verified = verifyTimelineMove(input.timeline, input.move)
   if (!verified) return null
 
   let preGame: Chess
@@ -380,6 +437,34 @@ export function createRetryItem(input: CreateRetryItemInput): RetryItem | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Converts one fully reviewed adverse move into a durable, engine-free retry
+ * prompt. Any mismatch in the replay data returns null instead of making a
+ * best-effort exercise from untrusted review data.
+ */
+export function createRetryItem(input: CreateRetryItemInput): RetryItem | null {
+  return createRetryItemFromVerifiedMove(
+    input,
+    input ? verifyTimelineMove(input.timeline, input.move) : null,
+  )
+}
+
+/**
+ * Uses a snapshot created by `createVerifiedRetryTimeline()` so a single
+ * already-validated Review timeline can service cursor navigation in O(1).
+ * A forged structural object is rejected by the private registry.
+ */
+export function createRetryItemFromVerifiedTimeline(
+  input: CreateRetryItemFromVerifiedTimelineInput,
+): RetryItem | null {
+  const verifiedTimeline = input?.verifiedTimeline
+  if (!input || !verifiedTimeline || !verifiedRetryTimelines.has(verifiedTimeline)) return null
+  return createRetryItemFromVerifiedMove(
+    input,
+    verifiedMoveForReview(verifiedTimeline.moves, input.move),
+  )
 }
 
 export const createRetryItemFromReview = createRetryItem

@@ -147,6 +147,72 @@ describe('analysis workspace convenience contracts', () => {
     expect(picker).toContain('<option value="3" selected="">2. Nf3</option>')
   })
 
+  it('bounds long Review notation while pinning an early selected position', () => {
+    const source = createPgnTimeline('1. e4 e5').moves
+    const [white, black] = source
+    if (!white || !black) throw new Error('Expected two source moves.')
+    const moveRows = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      white: { ...white, ply: index * 2 + 1, moveNumber: index + 1 },
+      black: { ...black, ply: index * 2 + 2, moveNumber: index + 1 },
+    }))
+
+    const markup = renderToStaticMarkup(
+      <AnalysisMoveList moveRows={moveRows} ply={1} review={null} onSelectPly={vi.fn()} />,
+    )
+
+    expect(markup).toContain('class="analysis-moves__show-earlier"')
+    expect(markup).toContain('Show 40 earlier moves')
+    expect(markup).toContain('aria-label="Show 40 earlier moves; 59 earlier moves hidden"')
+    expect(markup).toContain('data-ply="1"')
+    expect(markup).toContain('data-ply="200"')
+    expect(markup).not.toContain('data-ply="3"')
+    expect(markup.match(/data-ply="/g)).toHaveLength(83)
+  })
+
+  it('pins the correct row for a custom timeline that begins with Black', () => {
+    const source = createPgnTimeline('1. e4 e5').moves
+    const [white, black] = source
+    if (!white || !black) throw new Error('Expected two source moves.')
+    const moveRows = [
+      { number: 42, black: { ...black, ply: 1, moveNumber: 42 } },
+      ...Array.from({ length: 99 }, (_, offset) => {
+        const index = offset + 1
+        return {
+          number: index + 42,
+          white: { ...white, ply: index * 2, moveNumber: index + 42 },
+          black: { ...black, ply: index * 2 + 1, moveNumber: index + 42 },
+        }
+      }),
+    ]
+
+    const markup = renderToStaticMarkup(
+      <AnalysisMoveList moveRows={moveRows} ply={2} review={null} onSelectPly={vi.fn()} />,
+    )
+
+    expect(markup).toContain('data-ply="2"')
+    expect(markup).not.toContain('data-ply="1"')
+    expect(markup).toContain('data-ply="199"')
+  })
+
+  it('labels the exact number of newly mounted rows when an early pin joins the next window', () => {
+    const source = createPgnTimeline('1. e4 e5').moves
+    const [white, black] = source
+    if (!white || !black) throw new Error('Expected two source moves.')
+    const moveRows = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      white: { ...white, ply: index * 2 + 1, moveNumber: index + 1 },
+      black: { ...black, ply: index * 2 + 2, moveNumber: index + 1 },
+    }))
+
+    const markup = renderToStaticMarkup(
+      <AnalysisMoveList moveRows={moveRows} ply={81} review={null} onSelectPly={vi.fn()} />,
+    )
+
+    expect(markup).toContain('Show 39 earlier moves')
+    expect(markup).toContain('aria-label="Show 39 earlier moves; 59 earlier moves hidden"')
+  })
+
   it('offers a user-initiated update when the live game safely extends Review', () => {
     const review = createPgnTimeline('1. e4 e5 2. Nf3')
     const live = createPgnTimeline('1. e4 e5 2. Nf3 Nc6')

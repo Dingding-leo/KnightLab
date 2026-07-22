@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { Chess } from 'chess.js'
+import { describe, expect, it, vi } from 'vitest'
 import { createPgnTimeline, type AnalysisTimeline } from '../analysis/analysisModel'
 import type { CoachGuidance } from './coach'
 import {
   RETRY_SCHEDULE_DAYS,
   createRetryItem,
+  createRetryItemFromVerifiedTimeline,
+  createVerifiedRetryTimeline,
   evaluateRetryMove,
   recordRetryAttempt,
   type RetryItem,
+  type VerifiedRetryTimeline,
 } from './retry'
 import type { ReviewedMove } from './reviewModel'
 
@@ -52,6 +56,13 @@ function item(now = '2026-07-22T00:00:00.000Z'): RetryItem {
   })
   if (!created) throw new Error('Expected a valid retry item for the test.')
   return created
+}
+
+function repeatedKnightTimeline(plies = 1_024): AnalysisTimeline {
+  const game = new Chess()
+  const cycle = ['Nf3', 'Nf6', 'Ng1', 'Ng8']
+  for (let index = 0; index < plies; index += 1) game.move(cycle[index % cycle.length]!)
+  return createPgnTimeline(game.pgn())
 }
 
 describe('retry item domain', () => {
@@ -160,6 +171,85 @@ describe('retry item domain', () => {
     expect(createRetryItem({ ...base, move: reviewedMove(timeline, 1, { to: 'e3' }) })).toBeNull()
     expect(createRetryItem({ ...base, move: reviewedMove(timeline, 1, { bestMoveUci: 'a1a8' }) })).toBeNull()
     expect(createRetryItem({ ...base, reviewKey: 'not-a-review-key' })).toBeNull()
+  })
+
+  it('reuses one immutable verified timeline without weakening the standalone fail-closed replay', () => {
+    const timeline = createPgnTimeline('1. e4 e5 2. Nf3 Nc6 *')
+    const move = reviewedMove(timeline, 2, {
+      bestMoveUci: 'c7c5',
+      bestMoveSan: 'c5',
+      bestLineSan: ['c5', 'Nf3'],
+    })
+    const verifiedTimeline = createVerifiedRetryTimeline(timeline)
+    if (!verifiedTimeline) throw new Error('Expected a verified retry timeline.')
+
+    const input = {
+      move,
+      reviewKey: '0123456789abcdef',
+      now: '2026-07-22T00:00:00.000Z',
+    }
+    const strict = createRetryItem({ timeline, ...input })
+    const reused = createRetryItemFromVerifiedTimeline({ verifiedTimeline, ...input })
+
+    expect(reused).toEqual(strict)
+    expect(Object.isFrozen(verifiedTimeline)).toBe(true)
+    expect(Object.isFrozen(verifiedTimeline.moves)).toBe(true)
+    expect(Object.isFrozen(verifiedTimeline.moves[1])).toBe(true)
+
+    // A later raw-object mutation cannot alter the captured facts. The
+    // original public path still replays every move and rejects it.
+    timeline.positions[2]!.fen = timeline.positions[1]!.fen
+    expect(createRetryItem({ timeline, ...input })).toBeNull()
+    expect(createRetryItemFromVerifiedTimeline({ verifiedTimeline, ...input })).toMatchObject({
+      sourcePly: 2,
+      preFen: strict?.preFen,
+      playedMoveUci: 'e7e5',
+    })
+
+    const forged = { moves: verifiedTimeline.moves } as unknown as VerifiedRetryTimeline
+    expect(createRetryItemFromVerifiedTimeline({ verifiedTimeline: forged, ...input })).toBeNull()
+  })
+
+  it('refuses a malformed timeline before it can become a reusable retry snapshot', () => {
+    const timeline = createPgnTimeline('1. e4 e5 2. Nf3 Nc6 *')
+    timeline.moves[3]!.san = 'Na9'
+
+    expect(createVerifiedRetryTimeline(timeline)).toBeNull()
+  })
+
+  it('does not replay a 1,024-ply game again for each Review practice prompt', () => {
+    const timeline = repeatedKnightTimeline()
+    const first = reviewedMove(timeline, 1)
+    const second = reviewedMove(timeline, 2, {
+      bestMoveUci: 'c7c5',
+      bestMoveSan: 'c5',
+      bestLineSan: ['c5', 'Nf3'],
+    })
+    const move = vi.spyOn(Chess.prototype, 'move')
+
+    try {
+      const verifiedTimeline = createVerifiedRetryTimeline(timeline)
+      if (!verifiedTimeline) throw new Error('Expected a verified long retry timeline.')
+      expect(move.mock.calls.length).toBeGreaterThanOrEqual(1_024)
+
+      move.mockClear()
+      expect(createRetryItemFromVerifiedTimeline({
+        verifiedTimeline,
+        move: first,
+        reviewKey: '0123456789abcdef',
+        now: '2026-07-22T00:00:00.000Z',
+      })).not.toBeNull()
+      expect(createRetryItemFromVerifiedTimeline({
+        verifiedTimeline,
+        move: second,
+        reviewKey: '0123456789abcdef',
+        now: '2026-07-22T00:00:00.000Z',
+      })).not.toBeNull()
+
+      expect(move.mock.calls.length).toBeLessThan(30)
+    } finally {
+      move.mockRestore()
+    }
   })
 
   it('uses a deterministic 1, 3, 7, 14, 30 day schedule and resets alternatives for immediate retry', () => {

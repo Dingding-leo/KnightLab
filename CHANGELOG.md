@@ -91,8 +91,10 @@
 
 - Personal retry queues now reconstruct `chess.js` lines only for the active exercise; unopened selector labels derive from persisted FEN fullmove facts instead of replaying every saved PV
 - Browser retry save/load-one/delete paths now reuse a private raw-text-versioned canonical queue snapshot after first validation, avoiding repeated replay and sorting of up to 500 unchanged saved positions
+- A completed Review now creates one frozen, fully validated private retry-timeline snapshot; browsing an eligible error or assembling its small practice batch looks up the selected ply instead of replaying the entire PGN again, while the public retry boundary remains fail-closed
 - Browser full-game Review releases its idle candidate-line Stockfish Worker before creating the sequential Review Worker, then releases that job worker on completion, Stop or a superseding action without allowing late cleanup to affect a newer run
 - Play notation now bounds unusually long histories to the newest 40 move rows, expands older rows in explicit 40-row batches and pins an early historical preview without remounting omitted notation
+- Review notation now applies the same progressive 40-row window, keeps an early selected row pinned through cursor navigation and maps custom Black-start games by their real source ply
 - Review selected-move lookup now uses the contiguous persisted ply index rather than scanning the full report for every board-navigation step
 - Native analysis clients now allocate renderer-wide increasing request IDs, consume exact cancellation markers at each cancellation fence and clear them when their blocking task settles
 - The KnightClub GitHub repository is now canonically `Dingding-leo/KnightClub`, matching the local package, desktop bundle and published metadata

@@ -73,7 +73,16 @@ import {
   liveGameContinuation,
   type LiveGameContinuation,
 } from '../review/liveGameContinuation'
-import { createRetryItem, type RetryItem } from '../review/retry'
+import {
+  createRetryItemFromVerifiedTimeline,
+  createVerifiedRetryTimeline,
+  type RetryItem,
+} from '../review/retry'
+import {
+  MOVE_LIST_INITIAL_VISIBLE_ROWS,
+  progressiveMoveRows,
+  revealEarlierMoveRows,
+} from './moveListPagination'
 import { saveRetryItemsSerially } from '../review/retryQueuePersistence'
 import {
   createPersistedReview,
@@ -346,6 +355,7 @@ export const AnalysisMovePicker = memo(function AnalysisMovePicker({ moves, ply,
  */
 export const AnalysisMoveList = memo(function AnalysisMoveList({ moveRows, ply, review, onSelectPly }: AnalysisMoveListProps) {
   const onSelectPlyRef = useRef(onSelectPly)
+  const [visibleRowCount, setVisibleRowCount] = useState(MOVE_LIST_INITIAL_VISIBLE_ROWS)
   const finalRow = moveRows.at(-1)
   const maxPly = finalRow?.black?.ply ?? finalRow?.white?.ply ?? 0
   useLayoutEffect(() => {
@@ -361,19 +371,64 @@ export const AnalysisMoveList = memo(function AnalysisMoveList({ moveRows, ply, 
     onSelectPlyRef.current(nextPly)
   }, [maxPly])
 
+  // A custom setup FEN may begin with Black, so map real plies to rows instead
+  // of assuming every pair starts with a White move or scanning on each arrow.
+  const rowIndexByPly = useMemo(() => {
+    const indexes = new Map<number, number>()
+    moveRows.forEach((row, index) => {
+      if (row.white) indexes.set(row.white.ply, index)
+      if (row.black) indexes.set(row.black.ply, index)
+    })
+    return indexes
+  }, [moveRows])
+  const activeRowIndex = Number.isInteger(ply) && ply >= 1
+    ? rowIndexByPly.get(ply) ?? null
+    : null
+  const page = useMemo(
+    () => progressiveMoveRows(moveRows, visibleRowCount, activeRowIndex),
+    [activeRowIndex, moveRows, visibleRowCount],
+  )
+  const nextVisibleRowCount = revealEarlierMoveRows(visibleRowCount, moveRows.length)
+  const nextRevealCount = useMemo(() => {
+    const nextPage = progressiveMoveRows(moveRows, nextVisibleRowCount, activeRowIndex)
+    const mountedRows = page.trailingRows.length + (page.pinnedRow ? 1 : 0)
+    const nextMountedRows = nextPage.trailingRows.length + (nextPage.pinnedRow ? 1 : 0)
+    return Math.max(0, nextMountedRows - mountedRows)
+  }, [activeRowIndex, moveRows, nextVisibleRowCount, page.pinnedRow, page.trailingRows.length])
+  const showEarlierMoves = useCallback(() => {
+    setVisibleRowCount((count) => revealEarlierMoveRows(count, moveRows.length))
+  }, [moveRows.length])
+
+  const row = (item: AnalysisMoveRow) => (
+    <AnalysisMoveRow
+      key={item.number}
+      row={item}
+      whiteCurrent={ply === item.white?.ply}
+      blackCurrent={ply === item.black?.ply}
+      whiteReview={item.white ? review?.moves[item.white.ply - 1] : undefined}
+      blackReview={item.black ? review?.moves[item.black.ply - 1] : undefined}
+    />
+  )
+
   return (
     <div className="analysis-moves" aria-label="Game moves" onClick={selectPlyFromNotation}>
       <button type="button" data-ply={0} className={ply === 0 ? 'is-current' : ''} aria-current={ply === 0 ? 'step' : undefined}>Start position</button>
-      {moveRows.map((row) => (
-        <AnalysisMoveRow
-          key={row.number}
-          row={row}
-          whiteCurrent={ply === row.white?.ply}
-          blackCurrent={ply === row.black?.ply}
-          whiteReview={row.white ? review?.moves[row.white.ply - 1] : undefined}
-          blackReview={row.black ? review?.moves[row.black.ply - 1] : undefined}
-        />
-      ))}
+      {page.hiddenRowCount > 0 && (
+        <button
+          className="analysis-moves__show-earlier"
+          type="button"
+          onClick={showEarlierMoves}
+          aria-label={`Show ${nextRevealCount} earlier moves; ${page.hiddenRowCount} earlier moves hidden`}
+        >Show {nextRevealCount} earlier moves</button>
+      )}
+      {page.hiddenBeforePinnedCount > 0 && (
+        <p className="analysis-moves__omitted">{page.hiddenBeforePinnedCount} earlier move{page.hiddenBeforePinnedCount === 1 ? '' : 's'} hidden</p>
+      )}
+      {page.pinnedRow && row(page.pinnedRow)}
+      {page.hiddenAfterPinnedCount > 0 && (
+        <p className="analysis-moves__omitted">{page.hiddenAfterPinnedCount} moves between this position and the newest notation hidden</p>
+      )}
+      {page.trailingRows.map(row)}
     </div>
   )
 })
@@ -507,6 +562,13 @@ export function AnalysisWorkspace({
     () => timeline.source === 'pgn' && timeline.moves.length ? createReviewKey(timeline) : null,
     [timeline],
   )
+  // A completed report can surface several training calls-to-action while the
+  // player browses it. Validate the immutable game replay once, then retain a
+  // private snapshot so cursor movement only checks the selected ply.
+  const verifiedRetryTimeline = useMemo(() => {
+    if (!review || !reviewKey) return null
+    return createVerifiedRetryTimeline(timeline)
+  }, [review, reviewKey, timeline])
   const fullReviewAction = fullReviewActionFor({
     engineBusy,
     reviewHydrating,
@@ -518,16 +580,16 @@ export function AnalysisWorkspace({
   }, [selectedReview, timeline])
   const coachEvidenceSquares = useMemo(() => evidenceSquaresForGuidance(coachGuidance), [coachGuidance])
   const selectedRetryItem = useMemo(() => {
-    if (!selectedReview || !reviewKey) return null
-    return createRetryItem({
-      timeline,
+    if (!selectedReview || !reviewKey || !verifiedRetryTimeline) return null
+    return createRetryItemFromVerifiedTimeline({
+      verifiedTimeline: verifiedRetryTimeline,
       move: selectedReview,
       reviewKey,
       guidance: coachGuidance,
     })
-  }, [coachGuidance, reviewKey, selectedReview, timeline])
+  }, [coachGuidance, reviewKey, selectedReview, verifiedRetryTimeline])
   const batchRetryItems = useMemo(() => {
-    if (!review || !reviewKey) return []
+    if (!review || !reviewKey || !verifiedRetryTimeline) return []
     const candidates = review.moves
       .filter((move) => move.isBestMove === false && move.confidence === 'normal'
         && ['inaccuracy', 'mistake', 'miss', 'blunder'].includes(move.classification))
@@ -535,8 +597,8 @@ export function AnalysisWorkspace({
       .slice(0, 12)
     const items: RetryItem[] = []
     for (const move of candidates) {
-      const item = createRetryItem({
-        timeline,
+      const item = createRetryItemFromVerifiedTimeline({
+        verifiedTimeline: verifiedRetryTimeline,
         move,
         reviewKey,
         guidance: buildCoachGuidanceFromTimeline(timeline, move),
@@ -545,7 +607,7 @@ export function AnalysisWorkspace({
       if (items.length === 3) break
     }
     return items
-  }, [review, reviewKey, timeline])
+  }, [review, reviewKey, timeline, verifiedRetryTimeline])
   const retrySaving = retrySavingAction !== null
   const moveRows = useMemo(
     () => {
@@ -1227,7 +1289,7 @@ export function AnalysisWorkspace({
           <div className="analysis-empty" role="status"><Gauge size={28} /><strong>No legal continuation</strong><span>This may be a checkmate, stalemate or other terminal position.</span></div>
         )}
 
-        <AnalysisMoveList moveRows={moveRows} ply={ply} review={review} onSelectPly={setPly} />
+        <AnalysisMoveList key={reviewKey ?? timeline.startFen} moveRows={moveRows} ply={ply} review={review} onSelectPly={setPly} />
       </aside>
     </section>
   )
