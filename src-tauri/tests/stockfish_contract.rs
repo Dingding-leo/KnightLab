@@ -118,7 +118,8 @@ fn validates_advanced_settings_and_builds_bounded_uci_commands() {
         depth: Some(18),
         nodes: Some(250_000),
     };
-    let settings = resolve_search_settings("balanced", Some(request)).expect("valid settings");
+    let settings =
+        resolve_search_settings("balanced", Some(request.clone())).expect("valid settings");
     assert_eq!(
         uci_option_commands(&settings),
         vec![
@@ -140,6 +141,15 @@ fn validates_advanced_settings_and_builds_bounded_uci_commands() {
         ..settings.into()
     };
     assert!(resolve_search_settings("balanced", Some(invalid)).is_err());
+
+    let invalid_high = SearchSettingsRequest {
+        move_time_ms: 30_001,
+        threads: 33,
+        hash_mb: 4097,
+        nodes: Some(100_000_001),
+        ..request
+    };
+    assert!(resolve_search_settings("balanced", Some(invalid_high)).is_err());
 }
 
 #[test]

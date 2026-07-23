@@ -90,6 +90,7 @@
 - Stockfish starts through `std::process::Command` without a shell
 - FEN and UCI move validation plus request-ID/FEN stale-response rejection
 - File-picker paths remain data, and every persisted resource/search limit is revalidated at the Rust command boundary
+- Invalid interactive engine values now receive field-specific feedback and stay out of saved state; persisted, Play, Review and direct browser-worker normalizers return malformed/fractional/out-of-range resource values to safe defaults instead of promoting them to UCI maxima
 - Local Review file imports reject declared-oversized picker files before `File.text()`, validate actual UTF-8 bytes, cap all notation at 512 KiB and FEN at 1 KiB, accept valid PGN misnamed `.fen`, retain only the newest pending selection and preserve the active timeline after a read or parse failure
 
 ### Changed

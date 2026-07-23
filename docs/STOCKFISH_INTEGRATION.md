@@ -48,6 +48,7 @@ All three enable `UCI_LimitStrength` and stop on whichever time or node limit ar
 - **Target Elo:** applies `UCI_LimitStrength`, `UCI_Elo` and the user's bounded resource/search limits.
 - **Custom UCI limits:** additionally exposes Skill Level and the strength-limit switch.
 - Bounds: Elo 1320–3190, Skill 0–20, move time 50–30000 ms, depth 1–40, nodes 1,000–100,000,000, MultiPV 1–5, threads 1–32 and Hash 16–4096 MB.
+- A typed setting outside those bounds, with a fraction or an invalid numeric draft is rejected with inline feedback and does not change the current request. Persisted/direct malformed fields fall back to their low-cost defaults; they are never rounded or clamped into an upper resource bound. The browser UI applies its effective 128 MB Hash ceiling as an additional validation limit.
 - `go` always has a move-time ceiling and may additionally include depth and nodes; Stockfish stops on the first reached limit.
 
 ## Cancellation and recovery

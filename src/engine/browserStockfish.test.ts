@@ -88,6 +88,21 @@ describe('browser Stockfish UCI parsing', () => {
       hashMb: 16,
       multiPv: 2,
     })
+    expect(resolveBrowserPlayOptions('balanced', {
+      ...DEFAULT_ENGINE_SETTINGS,
+      profile: 'custom',
+      moveTimeMs: 99_999,
+      nodes: 100_000_001,
+      multiPv: 6,
+      hashMb: 4097,
+    } as typeof DEFAULT_ENGINE_SETTINGS)).toMatchObject({
+      moveTimeMs: 60,
+      nodes: 3_000,
+      multiPv: 1,
+      hashMb: 16,
+    })
+    expect(resolveBrowserPlayOptions('balanced', DEFAULT_ENGINE_SETTINGS, Number.NaN as 1))
+      .toMatchObject({ multiPv: 1 })
   })
 })
 
@@ -155,6 +170,25 @@ describe('BrowserStockfishEngine', () => {
       'go movetime 200 depth 12 nodes 20000',
     ])
 
+    engine.dispose()
+  })
+
+  it('keeps malformed direct analysis options low-cost and never emits NaN UCI commands', async () => {
+    const worker = new FakeStockfishWorker()
+    const engine = new BrowserStockfishEngine(() => worker)
+
+    await engine.analyze(fen, {
+      moveTimeMs: 10_001,
+      depth: 41,
+      nodes: 100_000_001,
+      multiPv: 6,
+      hashMb: 4097,
+    } as Parameters<BrowserStockfishEngine['analyze']>[1])
+
+    expect(worker.messages).toContain('setoption name Hash value 64')
+    expect(worker.messages).toContain('setoption name MultiPV value 3')
+    expect(worker.messages.filter((message) => message.startsWith('go '))).toEqual(['go movetime 800 depth 18 nodes 1000'])
+    expect(worker.messages.join('\n')).not.toContain('NaN')
     engine.dispose()
   })
 

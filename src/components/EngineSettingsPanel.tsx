@@ -7,8 +7,12 @@ import {
   RefreshCw,
   TriangleAlert,
 } from 'lucide-react'
-import type { FocusEvent, KeyboardEvent } from 'react'
-import type { EngineSettings } from '../engine/engineSettings'
+import { useState, type FocusEvent, type KeyboardEvent } from 'react'
+import {
+  validateEngineSettingsPatch,
+  type EngineSettings,
+  type EngineSettingsField,
+} from '../engine/engineSettings'
 
 export type EngineStatus =
   | { kind: 'idle'; message?: string }
@@ -29,8 +33,9 @@ interface EngineSettingsPanelProps {
   onVerify: () => void
 }
 
-function numeric(value: string): number {
-  return Number(value)
+interface FieldError {
+  field: EngineSettingsField
+  message: string
 }
 
 function commitOnEnter(event: KeyboardEvent<HTMLInputElement>) {
@@ -49,9 +54,38 @@ export function EngineSettingsPanel({
   onVerify,
 }: EngineSettingsPanelProps) {
   const controlsDisabled = engineBusy || status.kind === 'checking'
-  const update = <Key extends keyof EngineSettings>(key: Key, value: EngineSettings[Key]) => {
+  const [fieldError, setFieldError] = useState<FieldError | null>(null)
+  const update = (key: EngineSettingsField, value: unknown) => {
     if (controlsDisabled) return
-    onChange({ ...settings, [key]: value })
+    const result = validateEngineSettingsPatch(settings, { [key]: value }, {
+      maximumHashMb: desktop ? undefined : 128,
+    })
+    if (!result.valid) {
+      setFieldError({ field: result.field ?? key, message: result.message })
+      return
+    }
+    setFieldError(null)
+    onChange(result.settings)
+  }
+  const commitNumericDraft = (key: EngineSettingsField, event: FocusEvent<HTMLInputElement>) => {
+    const input = event.currentTarget
+    update(key, input.validity.badInput ? Number.NaN : input.value)
+  }
+  const clearFieldError = (key: EngineSettingsField) => {
+    setFieldError((current) => current?.field === key ? null : current)
+  }
+  const invalidInputProps = (key: EngineSettingsField) => {
+    const error = fieldError?.field === key ? fieldError : null
+    return {
+      'aria-invalid': error ? true : undefined,
+      'aria-describedby': error ? `engine-settings-${key}-error` : undefined,
+    }
+  }
+  const inputError = (key: EngineSettingsField) => {
+    const error = fieldError?.field === key ? fieldError : null
+    return error
+      ? <small className="engine-field__error" id={`engine-settings-${key}-error`} role="alert">Not saved. {error.message}</small>
+      : null
   }
   return (
     <details className="engine-settings">
@@ -69,7 +103,7 @@ export function EngineSettingsPanel({
             aria-label="Engine profile"
             value={settings.profile}
             disabled={controlsDisabled}
-            onChange={(event) => update('profile', event.target.value as EngineSettings['profile'])}
+            onChange={(event) => update('profile', event.target.value)}
           >
             <option value="preset">Strength preset</option>
             <option value="elo">Target Elo</option>
@@ -81,14 +115,14 @@ export function EngineSettingsPanel({
           <p className="engine-settings__hint">Easy, Balanced and Strong use single-threaded, node-bounded combinations of Elo, skill, time and memory.</p>
         ) : (
           <div className="engine-settings__grid">
-            <label><span>Target Elo</span><input key={`elo-${settings.elo}`} aria-label="Target Elo" type="number" min="1320" max="3190" step="10" defaultValue={settings.elo} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onKeyDown={commitOnEnter} onBlur={(event: FocusEvent<HTMLInputElement>) => update('elo', numeric(event.target.value))} /></label>
-            {settings.profile === 'custom' && <label><span>Skill level</span><input key={`skill-${settings.skillLevel}`} aria-label="Skill level" type="number" min="0" max="20" defaultValue={settings.skillLevel} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onKeyDown={commitOnEnter} onBlur={(event) => update('skillLevel', numeric(event.target.value))} /></label>}
-            <label><span>Move time (ms)</span><input key={`time-${settings.moveTimeMs}`} aria-label="Move time in milliseconds" type="number" min="50" max="30000" step="50" defaultValue={settings.moveTimeMs} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onKeyDown={commitOnEnter} onBlur={(event) => update('moveTimeMs', numeric(event.target.value))} /></label>
-            <label><span>Threads</span><input key={`threads-${settings.threads}-${desktop}`} aria-label="Threads" type="number" min="1" max="32" defaultValue={desktop ? settings.threads : 1} disabled={controlsDisabled || !desktop} title={desktop ? undefined : 'The browser engine uses one isolated worker thread.'} onFocus={(event) => event.currentTarget.select()} onKeyDown={commitOnEnter} onBlur={(event) => update('threads', numeric(event.target.value))} /></label>
-            <label><span>Hash memory (MB)</span><input key={`hash-${settings.hashMb}`} aria-label="Hash memory" type="number" min="16" max={desktop ? 4096 : 128} step="16" defaultValue={Math.min(settings.hashMb, desktop ? 4096 : 128)} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onKeyDown={commitOnEnter} onBlur={(event) => update('hashMb', numeric(event.target.value))} /></label>
-            <label><span>MultiPV lines</span><input key={`multipv-${settings.multiPv}`} aria-label="MultiPV lines" type="number" min="1" max="5" defaultValue={settings.multiPv} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onKeyDown={commitOnEnter} onBlur={(event) => update('multiPv', numeric(event.target.value))} /></label>
-            <label><span>Search depth</span><input key={`depth-${settings.depth ?? 'none'}`} aria-label="Search depth" type="number" min="1" max="40" placeholder="No limit" defaultValue={settings.depth ?? ''} disabled={controlsDisabled} onKeyDown={commitOnEnter} onBlur={(event) => update('depth', event.target.value ? numeric(event.target.value) : null)} /></label>
-            <label><span>Node limit</span><input key={`nodes-${settings.nodes ?? 'none'}`} aria-label="Node limit" type="number" min="1000" max="100000000" step="1000" placeholder="No limit" defaultValue={settings.nodes ?? ''} disabled={controlsDisabled} onKeyDown={commitOnEnter} onBlur={(event) => update('nodes', event.target.value ? numeric(event.target.value) : null)} /></label>
+            <label><span>Target Elo</span><input key={`elo-${settings.elo}`} aria-label="Target Elo" type="number" min="1320" max="3190" step="10" defaultValue={settings.elo} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onInput={() => clearFieldError('elo')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('elo', event)} {...invalidInputProps('elo')} />{inputError('elo')}</label>
+            {settings.profile === 'custom' && <label><span>Skill level</span><input key={`skill-${settings.skillLevel}`} aria-label="Skill level" type="number" min="0" max="20" defaultValue={settings.skillLevel} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onInput={() => clearFieldError('skillLevel')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('skillLevel', event)} {...invalidInputProps('skillLevel')} />{inputError('skillLevel')}</label>}
+            <label><span>Move time (ms)</span><input key={`time-${settings.moveTimeMs}`} aria-label="Move time in milliseconds" type="number" min="50" max="30000" step="50" defaultValue={settings.moveTimeMs} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onInput={() => clearFieldError('moveTimeMs')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('moveTimeMs', event)} {...invalidInputProps('moveTimeMs')} />{inputError('moveTimeMs')}</label>
+            <label><span>Threads</span><input key={`threads-${settings.threads}-${desktop}`} aria-label="Threads" type="number" min="1" max="32" defaultValue={desktop ? settings.threads : 1} disabled={controlsDisabled || !desktop} title={desktop ? undefined : 'The browser engine uses one isolated worker thread.'} onFocus={(event) => event.currentTarget.select()} onInput={() => clearFieldError('threads')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('threads', event)} {...invalidInputProps('threads')} />{inputError('threads')}</label>
+            <label><span>Hash memory (MB)</span><input key={`hash-${settings.hashMb}-${desktop}`} aria-label="Hash memory" type="number" min="16" max={desktop ? 4096 : 128} step="16" defaultValue={Math.min(settings.hashMb, desktop ? 4096 : 128)} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onInput={() => clearFieldError('hashMb')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('hashMb', event)} {...invalidInputProps('hashMb')} />{inputError('hashMb')}</label>
+            <label><span>MultiPV lines</span><input key={`multipv-${settings.multiPv}`} aria-label="MultiPV lines" type="number" min="1" max="5" defaultValue={settings.multiPv} disabled={controlsDisabled} onFocus={(event) => event.currentTarget.select()} onInput={() => clearFieldError('multiPv')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('multiPv', event)} {...invalidInputProps('multiPv')} />{inputError('multiPv')}</label>
+            <label><span>Search depth</span><input key={`depth-${settings.depth ?? 'none'}`} aria-label="Search depth" type="number" min="1" max="40" placeholder="No limit" defaultValue={settings.depth ?? ''} disabled={controlsDisabled} onInput={() => clearFieldError('depth')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('depth', event)} {...invalidInputProps('depth')} />{inputError('depth')}</label>
+            <label><span>Node limit</span><input key={`nodes-${settings.nodes ?? 'none'}`} aria-label="Node limit" type="number" min="1000" max="100000000" step="1000" placeholder="No limit" defaultValue={settings.nodes ?? ''} disabled={controlsDisabled} onInput={() => clearFieldError('nodes')} onKeyDown={commitOnEnter} onBlur={(event) => commitNumericDraft('nodes', event)} {...invalidInputProps('nodes')} />{inputError('nodes')}</label>
           </div>
         )}
 

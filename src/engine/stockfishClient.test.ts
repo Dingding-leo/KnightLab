@@ -105,6 +105,36 @@ describe('StockfishClient', () => {
     })
   })
 
+  it('returns malformed custom limits to safe defaults before the native UCI boundary', async () => {
+    const invoke = vi.fn(async () => response())
+    const client = new StockfishClient(invoke)
+
+    await client.search(fen, 'balanced', {
+      ...DEFAULT_ENGINE_SETTINGS,
+      profile: 'custom',
+      moveTimeMs: 99_999,
+      depth: 41,
+      nodes: 100_000_001,
+      multiPv: 6,
+      threads: 33,
+      hashMb: 4097,
+    })
+
+    expect(invoke).toHaveBeenCalledWith('stockfish_best_move', {
+      request: expect.objectContaining({
+        settings: expect.objectContaining({
+          profile: 'custom',
+          moveTimeMs: 60,
+          depth: null,
+          nodes: 3_000,
+          multiPv: 1,
+          threads: 1,
+          hashMb: 16,
+        }),
+      }),
+    })
+  })
+
   it('exposes only safe same-search candidate moves while keeping the best move authoritative', async () => {
     const invoke = vi.fn(async () => response({
       lines: [

@@ -125,18 +125,43 @@ function parseResponse(value: unknown): AnalysisResponse {
   return value as unknown as AnalysisResponse
 }
 
-function boundedInteger(value: number, fallback: number, min: number, max: number): number {
-  return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback
+function safeInteger(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= min
+    && value <= max
+    ? value
+    : fallback
 }
 
-export function normalizeAnalysisSettings(value: Partial<AnalysisSettings>): AnalysisSettings {
+function optionalSafeInteger(
+  value: unknown,
+  fallback: number | null,
+  min: number,
+  max: number,
+): number | null {
+  if (value === null) return null
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= min
+    && value <= max
+    ? value
+    : fallback
+}
+
+/**
+ * Analysis has a separate request contract from Play. Invalid direct callers
+ * must return to its low-cost defaults rather than being rounded up to native
+ * maximum resources before the Rust boundary can see the original mistake.
+ */
+export function normalizeAnalysisSettings(value: Partial<AnalysisSettings> = {}): AnalysisSettings {
   return {
-    moveTimeMs: boundedInteger(value.moveTimeMs ?? DEFAULT_ANALYSIS_SETTINGS.moveTimeMs, DEFAULT_ANALYSIS_SETTINGS.moveTimeMs, 100, 10_000),
-    depth: value.depth === null ? null : boundedInteger(value.depth ?? DEFAULT_ANALYSIS_SETTINGS.depth!, DEFAULT_ANALYSIS_SETTINGS.depth!, 1, 40),
-    nodes: value.nodes === null || value.nodes === undefined ? null : boundedInteger(value.nodes, 100_000, 1_000, 100_000_000),
-    multiPv: boundedInteger(value.multiPv ?? DEFAULT_ANALYSIS_SETTINGS.multiPv, DEFAULT_ANALYSIS_SETTINGS.multiPv, 1, 5),
-    threads: boundedInteger(value.threads ?? DEFAULT_ANALYSIS_SETTINGS.threads, DEFAULT_ANALYSIS_SETTINGS.threads, 1, 32),
-    hashMb: boundedInteger(value.hashMb ?? DEFAULT_ANALYSIS_SETTINGS.hashMb, DEFAULT_ANALYSIS_SETTINGS.hashMb, 16, 4096),
+    moveTimeMs: safeInteger(value.moveTimeMs, DEFAULT_ANALYSIS_SETTINGS.moveTimeMs, 100, 10_000),
+    depth: optionalSafeInteger(value.depth, DEFAULT_ANALYSIS_SETTINGS.depth, 1, 40),
+    nodes: optionalSafeInteger(value.nodes, DEFAULT_ANALYSIS_SETTINGS.nodes, 1_000, 100_000_000),
+    multiPv: safeInteger(value.multiPv, DEFAULT_ANALYSIS_SETTINGS.multiPv, 1, 5),
+    threads: safeInteger(value.threads, DEFAULT_ANALYSIS_SETTINGS.threads, 1, 32),
+    hashMb: safeInteger(value.hashMb, DEFAULT_ANALYSIS_SETTINGS.hashMb, 16, 4096),
   }
 }
 

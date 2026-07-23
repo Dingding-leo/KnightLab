@@ -84,8 +84,35 @@ function isUciMove(value: string): boolean {
   return /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(value)
 }
 
-function boundedInteger(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, Math.round(value)))
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= minimum
+    && value <= maximum
+    ? value
+    : fallback
+}
+
+function normalizeBrowserSearchOptions(options: BrowserSearchOptions): BrowserSearchOptions {
+  return {
+    moveTimeMs: boundedInteger(options.moveTimeMs, DEFAULT_ENGINE_SETTINGS.moveTimeMs, 50, 30_000),
+    depth: options.depth === null || options.depth === undefined
+      ? null
+      : boundedInteger(options.depth, 1, 1, 40),
+    nodes: options.nodes === null || options.nodes === undefined
+      ? null
+      : boundedInteger(options.nodes, DEFAULT_ENGINE_SETTINGS.nodes ?? 1_000, 1_000, 100_000_000),
+    multiPv: boundedInteger(options.multiPv, 1, 1, 5),
+    hashMb: Math.min(MAX_BROWSER_HASH_MB, boundedInteger(options.hashMb, DEFAULT_ENGINE_SETTINGS.hashMb, 16, 4096)),
+    elo: boundedInteger(options.elo, DEFAULT_ENGINE_SETTINGS.elo, 1320, 3190),
+    skillLevel: boundedInteger(options.skillLevel, DEFAULT_ENGINE_SETTINGS.skillLevel, 0, 20),
+    limitStrength: options.limitStrength === true,
+    showWdl: options.showWdl === true,
+  }
+}
+
+function validCandidateCount(value: unknown): 1 | 2 | undefined {
+  return value === 1 || value === 2 ? value : undefined
 }
 
 function fieldInteger(
@@ -166,11 +193,12 @@ export function resolveBrowserPlayOptions(
   candidateCount?: 1 | 2,
 ): BrowserSearchOptions {
   const normalized = normalizeEngineSettings(settings)
+  const requestedCandidateCount = validCandidateCount(candidateCount)
   if (normalized.profile === 'preset') {
     const preset = playPreset(level)
     return {
       ...preset,
-      multiPv: candidateCount === undefined ? preset.multiPv : Math.max(preset.multiPv, candidateCount),
+      multiPv: requestedCandidateCount === undefined ? preset.multiPv : Math.max(preset.multiPv, requestedCandidateCount),
     }
   }
   return {
@@ -180,7 +208,7 @@ export function resolveBrowserPlayOptions(
     // A named profile asks for at least two lines from the same bounded `go`
     // request. Respect an explicitly higher custom setting instead of
     // silently lowering a user-selected analysis budget.
-    multiPv: candidateCount === undefined ? normalized.multiPv : Math.max(normalized.multiPv, candidateCount),
+    multiPv: requestedCandidateCount === undefined ? normalized.multiPv : Math.max(normalized.multiPv, requestedCandidateCount),
     hashMb: Math.min(normalized.hashMb, MAX_BROWSER_HASH_MB),
     elo: normalized.elo,
     skillLevel: normalized.skillLevel,
@@ -264,9 +292,22 @@ export class BrowserStockfishEngine {
     fen: string,
     settings: Pick<BrowserSearchOptions, 'moveTimeMs' | 'depth' | 'nodes' | 'multiPv' | 'hashMb'>,
   ): Promise<BrowserSearchResult> {
+    // `StockfishAnalysisClient` already validates this contract, but retain a
+    // direct Worker boundary as well: analysis must not reinterpret a bad
+    // value as Play's longer 30-second maximum.
+    const analysisOptions = {
+      moveTimeMs: boundedInteger(settings.moveTimeMs, 800, 100, 10_000),
+      depth: settings.depth === null || settings.depth === undefined
+        ? null
+        : boundedInteger(settings.depth, 18, 1, 40),
+      nodes: settings.nodes === null || settings.nodes === undefined
+        ? null
+        : boundedInteger(settings.nodes, 1_000, 1_000, 100_000_000),
+      multiPv: boundedInteger(settings.multiPv, 3, 1, 5),
+      hashMb: boundedInteger(settings.hashMb, 64, 16, 4096),
+    }
     return this.runSearch(fen, {
-      ...settings,
-      hashMb: Math.min(MAX_BROWSER_HASH_MB, boundedInteger(settings.hashMb, 16, 4096)),
+      ...analysisOptions,
       elo: 3190,
       skillLevel: 20,
       limitStrength: false,
@@ -311,6 +352,7 @@ export class BrowserStockfishEngine {
     if (!fen || fen.length > 256 || /[\n\r]/.test(fen) || fen.includes(String.fromCharCode(0))) {
       throw new Error('Invalid FEN for Stockfish.')
     }
+    const safeOptions = normalizeBrowserSearchOptions(options)
 
     let rejectAbort: (reason?: unknown) => void = () => undefined
     const cancelled = new Promise<never>((_resolve, reject) => {
@@ -323,8 +365,8 @@ export class BrowserStockfishEngine {
     try {
       await guarded(this.idle)
       await guarded(this.trackSetup(this.ensureReady()))
-      await guarded(this.trackSetup(this.configure(options)))
-      return await guarded(this.collectSearch(fen, options))
+      await guarded(this.trackSetup(this.configure(safeOptions)))
+      return await guarded(this.collectSearch(fen, safeOptions))
     } finally {
       if (this.activeOperation === operation) this.activeOperation = null
     }
@@ -421,11 +463,11 @@ export class BrowserStockfishEngine {
     if (!worker || !this.ready) throw new Error('Stockfish is not ready.')
     const commands = [
       'setoption name Threads value 1',
-      `setoption name Hash value ${Math.min(MAX_BROWSER_HASH_MB, boundedInteger(options.hashMb, 16, 4096))}`,
-      `setoption name MultiPV value ${boundedInteger(options.multiPv, 1, 5)}`,
-      `setoption name Skill Level value ${boundedInteger(options.skillLevel, 0, 20)}`,
+      `setoption name Hash value ${Math.min(MAX_BROWSER_HASH_MB, boundedInteger(options.hashMb, DEFAULT_ENGINE_SETTINGS.hashMb, 16, 4096))}`,
+      `setoption name MultiPV value ${boundedInteger(options.multiPv, 1, 1, 5)}`,
+      `setoption name Skill Level value ${boundedInteger(options.skillLevel, DEFAULT_ENGINE_SETTINGS.skillLevel, 0, 20)}`,
       `setoption name UCI_LimitStrength value ${options.limitStrength ? 'true' : 'false'}`,
-      `setoption name UCI_Elo value ${boundedInteger(options.elo, 1320, 3190)}`,
+      `setoption name UCI_Elo value ${boundedInteger(options.elo, DEFAULT_ENGINE_SETTINGS.elo, 1320, 3190)}`,
       `setoption name UCI_ShowWDL value ${options.showWdl ? 'true' : 'false'}`,
     ]
     const unchanged = this.configuredOptions?.length === commands.length
@@ -495,7 +537,7 @@ export class BrowserStockfishEngine {
         const error = new Error('Browser Stockfish timed out.')
         reject(error)
         this.dropWorker(error)
-      }, boundedInteger(options.moveTimeMs, 50, 30_000) + 5_000)
+      }, boundedInteger(options.moveTimeMs, DEFAULT_ENGINE_SETTINGS.moveTimeMs, 50, 30_000) + 5_000)
 
       this.activeSearch = {
         timer,
@@ -518,9 +560,9 @@ export class BrowserStockfishEngine {
       }
 
       worker.postMessage(`position fen ${fen}`)
-      let go = `go movetime ${boundedInteger(options.moveTimeMs, 50, 30_000)}`
-      if (options.depth !== null) go += ` depth ${boundedInteger(options.depth, 1, 40)}`
-      if (options.nodes !== null) go += ` nodes ${boundedInteger(options.nodes, 1_000, 100_000_000)}`
+      let go = `go movetime ${boundedInteger(options.moveTimeMs, DEFAULT_ENGINE_SETTINGS.moveTimeMs, 50, 30_000)}`
+      if (options.depth !== null) go += ` depth ${boundedInteger(options.depth, 1, 1, 40)}`
+      if (options.nodes !== null) go += ` nodes ${boundedInteger(options.nodes, DEFAULT_ENGINE_SETTINGS.nodes ?? 1_000, 1_000, 100_000_000)}`
       worker.postMessage(go)
     })
   }

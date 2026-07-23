@@ -97,6 +97,16 @@ fn builds_full_strength_bounded_analysis_commands() {
         ..request()
     };
     assert!(resolve_analysis_settings(invalid).is_err());
+
+    let invalid_high = AnalysisSettingsRequest {
+        move_time_ms: 10_001,
+        depth: Some(41),
+        nodes: Some(100_000_001),
+        multi_pv: 6,
+        threads: 33,
+        hash_mb: 4097,
+    };
+    assert!(resolve_analysis_settings(invalid_high).is_err());
 }
 
 #[test]

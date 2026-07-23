@@ -45,6 +45,33 @@ describe('StockfishAnalysisClient', () => {
     })
   })
 
+  it('does not promote malformed direct analysis limits to native maximum resources', async () => {
+    const invoke = vi.fn(async () => response())
+    const client = new StockfishAnalysisClient(invoke, 10)
+
+    await client.analyze(fen, null, {
+      moveTimeMs: 10_001,
+      depth: 41,
+      nodes: 100_000_001,
+      multiPv: 6,
+      threads: 33,
+      hashMb: 4097,
+    })
+
+    expect(invoke).toHaveBeenCalledWith('stockfish_analyze', {
+      request: expect.objectContaining({
+        settings: {
+          moveTimeMs: 800,
+          depth: 18,
+          nodes: null,
+          multiPv: 3,
+          threads: 1,
+          hashMb: 64,
+        },
+      }),
+    })
+  })
+
   it('gives independent production clients one shared increasing request-id sequence', async () => {
     const requestIds: number[] = []
     const invoke = vi.fn(async (_command: string, args?: Record<string, unknown>) => {

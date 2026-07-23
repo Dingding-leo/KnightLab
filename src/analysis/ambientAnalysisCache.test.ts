@@ -55,10 +55,21 @@ describe('AmbientAnalysisCache', () => {
     const canonical = request()
     const equivalent = request({
       enginePath: '   ',
-      settings: { ...canonical.settings, moveTimeMs: 250.4, depth: 11.6 },
+      settings: { ...canonical.settings },
     })
 
     expect(ambientAnalysisCacheKey(equivalent)).toBe(ambientAnalysisCacheKey(canonical))
+  })
+
+  it('gives malformed analysis limits their safe-default cache identity instead of an upper bound', () => {
+    const malformed = request({
+      settings: { ...request().settings, moveTimeMs: 250.4, depth: 41 },
+    })
+    const safeDefault = request({
+      settings: { ...request().settings, moveTimeMs: 800, depth: 18 },
+    })
+
+    expect(ambientAnalysisCacheKey(malformed)).toBe(ambientAnalysisCacheKey(safeDefault))
   })
 
   it('returns an independent hit only for the same backend, path, FEN and settings', () => {

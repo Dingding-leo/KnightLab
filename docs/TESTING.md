@@ -173,13 +173,14 @@ Frontend tests cover chess rules, clock presets/formatting plus visible-value ti
 ## Engine-settings user check
 
 1. In the browser, expand Engine settings and verify it initially says it loads on demand; select **Verify engine** and confirm Stockfish 18 Lite reports Ready. Executable controls remain hidden, Threads is fixed at one and Hash is capped at 128 MB.
-2. Select Custom, enter move time/depth/nodes/threads/Hash, press Enter or leave each field, reload and verify the normalized values survive.
-3. Confirm editing a multi-digit number stays as a draft and commits once instead of clamping each typed character.
-4. In the macOS app, verify automatic discovery reports the real Stockfish identity and resolved path.
-5. Open the native picker, choose Stockfish, confirm Checking becomes Ready and the selected path persists.
-6. Select Custom, make a legal White move and confirm Stockfish replies under the chosen limits.
-7. During a bot search, change a setting or start a new game; confirm the stale result never appears.
-8. After a real Stockfish reply, reopen Engine settings and confirm it says Ready with the returned engine identity/path. An authored opening cue must not claim it verified Stockfish; if KnightBot takes over or the search fails, confirm Ready is replaced by an honest error.
+2. Select Custom, enter valid move time/depth/nodes/threads/Hash values, press Enter or leave each field, reload and verify the saved values survive.
+3. Enter an out-of-range or fractional time, node, thread or Hash value. Confirm its field gains an inline “Not saved” explanation, the prior safe setting remains active and no value is silently promoted to a maximum; on the browser, confirm Hash above 128 MB is rejected.
+4. Confirm editing a multi-digit number stays as a draft and commits once rather than updating the game shell on every typed character.
+5. In the macOS app, verify automatic discovery reports the real Stockfish identity and resolved path.
+6. Open the native picker, choose Stockfish, confirm Checking becomes Ready and the selected path persists.
+7. Select Custom, make a legal White move and confirm Stockfish replies under the chosen limits.
+8. During a bot search, change a setting or start a new game; confirm the stale result never appears.
+9. After a real Stockfish reply, reopen Engine settings and confirm it says Ready with the returned engine identity/path. An authored opening cue must not claim it verified Stockfish; if KnightBot takes over or the search fails, confirm Ready is replaced by an honest error.
 
 ## Completion-action browser check
 

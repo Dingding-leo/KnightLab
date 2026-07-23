@@ -912,6 +912,8 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
 .engine-path > span { color: var(--muted); font-size: 9px; font-weight: 760; }
 .engine-settings__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .engine-settings__grid input { min-height: 34px; font-size: 10px; }
+.engine-settings__grid input[aria-invalid="true"] { border-color: rgba(255, 139, 130, .82); box-shadow: 0 0 0 3px rgba(255, 139, 130, .1); }
+.engine-field__error { color: var(--danger); font-size: 8px; font-weight: 700; line-height: 1.35; }
 
 .engine-checkbox {
   min-height: 34px;
