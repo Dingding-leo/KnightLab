@@ -471,18 +471,48 @@ export function recordTacticsTerminalAttempt(
   return { state: next, progress: successor, attempt }
 }
 
-/** Loads the one browser mirror key, failing closed to an empty local state. */
-export function loadBrowserTacticsState(storage?: TacticsStorage): TacticsState {
-  const target = browserStorage(storage)
-  if (!target) return createTacticsState()
+/**
+ * Reads the browser mirror without parsing it. Deferred tactics hydration can
+ * hand this opaque snapshot to a Worker, while synchronous callers retain the
+ * exact same fail-closed loader below.
+ */
+export function readBrowserTacticsStateRaw(storage?: TacticsStorage): string | null {
   try {
-    const raw = target.getItem(TACTICS_STORAGE_KEY)
+    return readBrowserTacticsStateRawStrict(storage)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Strict raw reader for the deferred Train surface. The synchronous loader
+ * remains fail-closed, while this path deliberately exposes blocked storage
+ * so Train can show a recoverable history error instead of a false fresh run.
+ */
+export function readBrowserTacticsStateRawStrict(storage?: TacticsStorage): string | null {
+  const target = browserStorage(storage)
+  if (!target) return null
+  return target.getItem(TACTICS_STORAGE_KEY)
+}
+
+/**
+ * Validates one raw browser mirror without reading storage. Keeping this
+ * boundary pure lets the Worker and synchronous loader share byte-bounded,
+ * fail-closed semantics exactly.
+ */
+export function parseBrowserTacticsStateRaw(raw: string | null): TacticsState {
+  try {
     if (raw === null || byteLength(raw) > MAX_TACTICS_STATE_BYTES) return createTacticsState()
     const parsed: unknown = JSON.parse(raw)
     return isTacticsState(parsed) ? mergeTacticsState(parsed) : createTacticsState()
   } catch {
     return createTacticsState()
   }
+}
+
+/** Loads the one browser mirror key, failing closed to an empty local state. */
+export function loadBrowserTacticsState(storage?: TacticsStorage): TacticsState {
+  return parseBrowserTacticsStateRaw(readBrowserTacticsStateRaw(storage))
 }
 
 /** Writes the complete mirror in one localStorage operation. */

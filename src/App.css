@@ -1384,6 +1384,7 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
 .train-history-loading > div { display: grid; gap: 4px; }
 .train-history-loading strong { color: var(--text); font-size: 13px; }
 .train-history-loading span { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.train-history-loading .secondary-button { justify-self: start; min-height: 36px; margin-top: 5px; }
 
 .analysis-panel {
   height: min(760px, calc(100dvh - 170px));

@@ -12,7 +12,8 @@ import {
   type EngineSettings,
 } from '../engine/engineSettings'
 
-const LIBRARY_KEY = 'knightclub.game-library.v1'
+/** Browser mirror used before a desktop SQLite migration takes ownership. */
+export const LIBRARY_STORAGE_KEY = 'knightclub.game-library.v1'
 const SESSION_KEY = 'knightclub.active-session.v1'
 const PREFERENCES_KEY = 'knightclub.preferences.v1'
 const MAX_GAMES = 500
@@ -41,6 +42,11 @@ export interface StoredGame {
   humanColor?: HumanColor
   /** The selection that resolved to `humanColor`; `random` remains meaningful after resolution. */
   colorChoice?: ColorChoice
+}
+
+/** Minimal browser-storage surface needed to read the legacy game library. */
+export interface LibraryStorage {
+  getItem(key: string): string | null
 }
 
 export interface ActiveSession {
@@ -185,15 +191,54 @@ function safeParse<T>(value: string | null, fallback: T): T {
   }
 }
 
+function browserLibraryStorage(storage?: LibraryStorage): LibraryStorage | null {
+  if (storage) return storage
+  return typeof localStorage === 'undefined' ? null : localStorage
+}
+
+/**
+ * Reads the legacy browser mirror without parsing it. The Library surface can
+ * hand this text to a dedicated Worker, while synchronous callers retain the
+ * same normalized loader below.
+ */
+export function readBrowserLibraryRaw(storage?: LibraryStorage): string | null {
+  try {
+    return readBrowserLibraryRawStrict(storage)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Raw reader for the opt-in Library surface. Unlike the synchronous legacy
+ * loader above, this preserves a storage-access failure so the UI can offer a
+ * retry instead of pretending an unreadable private library is empty.
+ */
+export function readBrowserLibraryRawStrict(storage?: LibraryStorage): string | null {
+  const target = browserLibraryStorage(storage)
+  if (!target) return null
+  return target.getItem(LIBRARY_STORAGE_KEY)
+}
+
+/**
+ * Pure fail-closed parser shared by the browser loader and deferred Worker
+ * hydration. It deliberately keeps the historic library normalization rules:
+ * malformed entries are dropped and a malformed snapshot becomes an empty
+ * library rather than leaking unknown persisted data into the UI.
+ */
+export function parseBrowserLibraryRaw(raw: string | null): StoredGame[] {
+  return normalizeLibrary(safeParse<unknown>(raw, []))
+}
+
 export function loadLibrary(): StoredGame[] {
-  return normalizeLibrary(safeParse<unknown>(localStorage.getItem(LIBRARY_KEY), []))
+  return parseBrowserLibraryRaw(readBrowserLibraryRaw())
 }
 
 export function saveGame(game: StoredGame): StoredGame[] {
   const library = loadLibrary()
   if (library.some((entry) => entry.id === game.id)) return library
   const next = [game, ...library].slice(0, MAX_GAMES)
-  localStorage.setItem(LIBRARY_KEY, JSON.stringify(next))
+  localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(next))
   return next
 }
 
@@ -204,12 +249,12 @@ export function updateGame(game: StoredGame): StoredGame[] {
   if (index < 0) return saveGame(game)
   const next = [...library]
   next[index] = game
-  localStorage.setItem(LIBRARY_KEY, JSON.stringify(next))
+  localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(next))
   return next
 }
 
 export function clearLibrary(): void {
-  localStorage.removeItem(LIBRARY_KEY)
+  localStorage.removeItem(LIBRARY_STORAGE_KEY)
 }
 
 export function saveActiveSession(session: ActiveSession): void {

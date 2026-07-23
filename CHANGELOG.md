@@ -4,6 +4,8 @@
 
 ### Added
 
+- Play now defers browser saved-game and tactics-history parsing alongside retry history: Library/Insights and Train adopt one freshness-checked local Worker snapshot only after the relevant workspace opens, with honest preparation states instead of an empty-data flash
+- Live Play now independently enforces its low-compute Easy/Balanced/Strong resource ceiling for preset, Elo and Custom profiles in the browser adapter, TypeScript native boundary and Rust UCI command; Custom strength identity remains available while a reply cannot gain extra threads, Hash, depth or unbounded search
 - Started timed games now remain visible outside Play through a live clock dock with both times, active/paused turn context and a one-tap return action
 - Full-game Review now enforces its shared 1,024-ply persisted-report bound while long imports retain per-position analysis and use a numeric ply jump instead of a giant mobile option list
 - Review now offers an explicitly temporary, local **Explore this position** branch: legal click/drag moves, keyboard-safe focused promotion choice, Undo/Reset/Return controls, an explicit non-save notice when main-line navigation leaves the branch, branch-specific Stockfish analysis and standalone FEN/PGN transfer without modifying the original game; long sequential branches reuse verified local replay history and create PGN only when transferred

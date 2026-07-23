@@ -78,13 +78,22 @@ function cloneRetryItem(item: RetryItem): RetryItem {
  * retain the same fail-closed loader below.
  */
 export function readBrowserRetryItemsRaw(storage?: RetryStorage): string | null {
-  const target = browserStorage(storage)
-  if (!target) return null
   try {
-    return target.getItem(RETRY_STORAGE_KEY)
+    return readBrowserRetryItemsRawStrict(storage)
   } catch {
     return null
   }
+}
+
+/**
+ * Strict raw reader for deferred Train hydration. Synchronous compatibility
+ * callers still fail closed, while the interactive surface can distinguish an
+ * unreadable browser store from a genuinely empty practice queue.
+ */
+export function readBrowserRetryItemsRawStrict(storage?: RetryStorage): string | null {
+  const target = browserStorage(storage)
+  if (!target) return null
+  return target.getItem(RETRY_STORAGE_KEY)
 }
 
 /**

@@ -447,6 +447,29 @@ pub fn resolve_search_settings(
     })
 }
 
+/// Applies the non-negotiable resource guard for a live Play reply. Review
+/// analysis has its own, deliberately independent settings resolver; a custom
+/// bot profile must never turn a normal move into a multi-core or multi-GB
+/// search. The finite per-level presets remain the source of truth for these
+/// ceilings, while lower valid time/node selections are preserved.
+pub fn apply_play_resource_budget(
+    level: &str,
+    settings: &mut SearchSettings,
+) -> Result<(), EngineError> {
+    let budget = strength_preset(level)?;
+    let budget_nodes = budget
+        .nodes
+        .expect("every bounded Play preset has a finite node cap");
+
+    settings.move_time_ms = settings.move_time_ms.min(budget.move_time_ms);
+    settings.nodes = Some(settings.nodes.map_or(budget_nodes, |nodes| nodes.min(budget_nodes)));
+    settings.depth = None;
+    settings.multi_pv = 1;
+    settings.threads = 1;
+    settings.hash_mb = 16;
+    Ok(())
+}
+
 /// A named local opponent may ask for a second principal variation from the
 /// same bounded play search. This never changes time, nodes, threads or Hash;
 /// it only raises MultiPV when a caller explicitly asks for one or two lines.
@@ -462,8 +485,9 @@ pub fn apply_play_candidate_count(
             "Play candidate count must be between 1 and 2".into(),
         ));
     }
-    // A custom user setting may already request more lines. Preserve it rather
-    // than silently lowering their chosen engine behavior.
+    // The low-resource Play guard starts each search at one line. A named
+    // profile may request exactly one close alternative without changing the
+    // time, node, thread or Hash budget.
     settings.multi_pv = settings.multi_pv.max(candidate_count);
     Ok(())
 }
@@ -1379,6 +1403,8 @@ fn stockfish_best_move_blocking(
     let path = discover_for_app(request.engine_path).map_err(|error| error.to_string())?;
     let mut settings = resolve_search_settings(&request.level, request.settings)
         .map_err(|error| error.to_string())?;
+    apply_play_resource_budget(&request.level, &mut settings)
+        .map_err(|error| error.to_string())?;
     apply_play_candidate_count(&mut settings, request.candidate_count)
         .map_err(|error| error.to_string())?;
     let mut guard = state
@@ -1550,6 +1576,57 @@ mod tests {
                 hash_mb: 16,
             },
         }
+    }
+
+    #[test]
+    fn live_play_resource_budget_caps_custom_requests_without_restricting_review_settings() {
+        let mut settings = resolve_search_settings(
+            "strong",
+            Some(SearchSettingsRequest {
+                profile: "custom".into(),
+                elo: 2460,
+                move_time_ms: 30_000,
+                skill_level: 17,
+                limit_strength: false,
+                threads: 32,
+                hash_mb: 4096,
+                multi_pv: 5,
+                depth: Some(40),
+                nodes: Some(100_000_000),
+            }),
+        )
+        .expect("the interactive custom draft is valid before the Play cap");
+
+        apply_play_resource_budget("strong", &mut settings)
+            .expect("a known Play level has a finite budget");
+
+        assert_eq!(settings.elo, 2460);
+        assert_eq!(settings.skill_level, 17);
+        assert!(!settings.limit_strength);
+        assert_eq!(settings.move_time_ms, 90);
+        assert_eq!(settings.nodes, Some(7_000));
+        assert_eq!(settings.depth, None);
+        assert_eq!(settings.multi_pv, 1);
+        assert_eq!(settings.threads, 1);
+        assert_eq!(settings.hash_mb, 16);
+        assert_eq!(go_command(&settings), "go movetime 90 nodes 7000");
+
+        apply_play_candidate_count(&mut settings, Some(2))
+            .expect("a named bot may request one close alternative");
+        assert_eq!(settings.multi_pv, 2);
+
+        let review = resolve_analysis_settings(AnalysisSettingsRequest {
+            move_time_ms: 10_000,
+            depth: Some(40),
+            nodes: Some(100_000_000),
+            multi_pv: 5,
+            threads: 32,
+            hash_mb: 4096,
+        })
+        .expect("Review keeps its explicit advanced limits");
+        assert_eq!(review.move_time_ms, 10_000);
+        assert_eq!(review.threads, 32);
+        assert_eq!(review.hash_mb, 4096);
     }
 
     #[test]

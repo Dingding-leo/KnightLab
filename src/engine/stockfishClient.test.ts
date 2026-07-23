@@ -88,7 +88,7 @@ describe('StockfishClient', () => {
     })
   })
 
-  it('sends the normalized executable path and advanced settings', async () => {
+  it('sends the normalized executable path with the bounded live-Play budget', async () => {
     const invoke = vi.fn(async () => response())
     const client = new StockfishClient(invoke)
 
@@ -105,7 +105,15 @@ describe('StockfishClient', () => {
       request: expect.objectContaining({
         enginePath: '/opt/local/bin/stockfish',
         candidateCount: 2,
-        settings: expect.objectContaining({ profile: 'custom', threads: 4, hashMb: 256, depth: 16 }),
+        settings: expect.objectContaining({
+          profile: 'custom',
+          moveTimeMs: 60,
+          nodes: 3_000,
+          threads: 1,
+          hashMb: 16,
+          depth: null,
+          multiPv: 1,
+        }),
       }),
     })
   })

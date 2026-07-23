@@ -9,9 +9,9 @@ import {
 } from './playCandidates'
 import {
   DEFAULT_ENGINE_SETTINGS,
-  normalizeEngineSettings,
   type EngineSettings,
 } from './engineSettings'
+import { resolvePlayEngineBudget } from './playEngineBudget'
 export { isTauriRuntime } from './runtime'
 import { isTauriRuntime } from './runtime'
 
@@ -79,7 +79,11 @@ export class StockfishClient {
     this.cancel()
     const requestId = this.nextRequestId++
     this.activeRequestId = requestId
-    const normalized = normalizeEngineSettings(settings)
+    // `stockfish_best_move` is the live Play boundary. Keep custom/Elo
+    // preferences from accidentally turning each bot turn into a Review-size
+    // calculation; the same cap is independently enforced by the native
+    // command for a renderer that bypasses this client.
+    const normalized = resolvePlayEngineBudget(level, settings)
     const { enginePath, ...searchSettings } = normalized
     let raw: unknown
     try {

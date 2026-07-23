@@ -137,11 +137,11 @@ import {
   clearActiveSession,
   clearLibrary,
   loadActiveSession,
-  loadLibrary,
   markLibraryGamesReviewed,
   loadPreferences,
   mergeLibraryGames,
   normalizePreferences,
+  readBrowserLibraryRawStrict,
   saveActiveSession,
   saveGame,
   savePreferences,
@@ -149,6 +149,7 @@ import {
   type StoredGame,
 } from './storage/gameStore'
 import { DatabaseClient } from './storage/databaseClient'
+import { LibraryHydrationClient } from './storage/libraryHydrationClient'
 import {
   createReviewKeyFromMoves,
   loadBrowserReview,
@@ -158,16 +159,18 @@ import {
 import {
   deleteBrowserRetryItem,
   loadBrowserRetryItem,
-  readBrowserRetryItemsRaw,
+  readBrowserRetryItemsRawStrict,
   saveBrowserRetryItem,
 } from './review/retryPersistence'
 import { compareRetryItems, type RetryItem } from './review/retry'
 import { TrainingRetryHydrationClient } from './training/trainingRetryHydrationClient'
+import { TacticsHydrationClient } from './training/tacticsHydrationClient'
 import { SEED_TACTICS } from './tactics/seedPuzzles'
 import type { TacticPuzzle } from './tactics/tactics'
 import {
-  loadBrowserTacticsState,
+  createTacticsState,
   mergeTacticsState,
+  readBrowserTacticsStateRawStrict,
   recordTacticsTerminalAttempt,
   saveBrowserTacticsState,
   tacticsStateToTacticProgress,
@@ -536,8 +539,11 @@ export default function App() {
   // SQLite is authoritative on desktop, but a complete library can contain
   // hundreds of PGNs. Do not synchronously parse its browser mirror on Play's
   // first render; it is imported only when a truly empty database needs it.
-  const [library, setLibrary] = useState<StoredGame[]>(() => desktop ? [] : loadLibrary())
-  const [libraryLoadState, setLibraryLoadState] = useState<LibraryLoadState>(() => desktop ? 'idle' : 'ready')
+  // Library parsing can involve hundreds of PGNs. Play starts with an empty
+  // in-memory view and opens that private history only when Library, Insights
+  // or a one-time desktop migration actually needs it.
+  const [library, setLibrary] = useState<StoredGame[]>([])
+  const [libraryLoadState, setLibraryLoadState] = useState<LibraryLoadState>('idle')
   const [libraryQuery, setLibraryQuery] = useState('')
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'reviewed' | 'unreviewed'>('all')
   const [showAbortedGames, setShowAbortedGames] = useState(false)
@@ -547,7 +553,12 @@ export default function App() {
   // browser mirror only after a player asks for training.
   const [retryItems, setRetryItems] = useState<RetryItem[]>([])
   const [retryHistoryLoading, setRetryHistoryLoading] = useState(false)
-  const [tacticsState, setTacticsState] = useState<TacticsState>(() => loadBrowserTacticsState())
+  const [retryHistoryError, setRetryHistoryError] = useState(false)
+  // Tactics history is likewise opt-in: opening a fresh board must not parse
+  // up to 500 local attempts before a player has chosen Train.
+  const [tacticsState, setTacticsState] = useState<TacticsState>(() => createTacticsState())
+  const [tacticsHistoryLoading, setTacticsHistoryLoading] = useState(false)
+  const [tacticsHistoryError, setTacticsHistoryError] = useState(false)
   const [requestedRetryKey, setRequestedRetryKey] = useState<string | null>(null)
   const [requestedReviewTarget, setRequestedReviewTarget] = useState<{ reviewKey: string; sourcePly: number } | null>(null)
   const [requestedPlayPreviewTarget, setRequestedPlayPreviewTarget] = useState<{ sourcePly: number; expectedFen: string } | null>(null)
@@ -570,6 +581,15 @@ export default function App() {
   const retryHistoryHydration = useRef<Promise<RetryItem[]> | null>(null)
   const retryHistoryRequestVersion = useRef(0)
   const retryHydrationClient = useRef<TrainingRetryHydrationClient | null>(null)
+  const libraryHistoryReady = useRef(false)
+  const libraryHistoryHydration = useRef<Promise<StoredGame[]> | null>(null)
+  const libraryHistoryRequestVersion = useRef(0)
+  const libraryHydrationClient = useRef<LibraryHydrationClient | null>(null)
+  const libraryItemsRef = useRef(library)
+  const tacticsHistoryReady = useRef(false)
+  const tacticsHistoryHydration = useRef<Promise<TacticsState> | null>(null)
+  const tacticsHistoryRequestVersion = useRef(0)
+  const tacticsHydrationClient = useRef<TacticsHydrationClient | null>(null)
   const tacticsStateRef = useRef(tacticsState)
   const tacticsWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const libraryRequestVersion = useRef(0)
@@ -587,6 +607,7 @@ export default function App() {
     onMoveAttempt: () => {},
   })
   retryItemsRef.current = retryItems
+  libraryItemsRef.current = library
   tacticsStateRef.current = tacticsState
   soundsEnabledRef.current = soundsEnabled
   premoveRef.current = premove
@@ -600,18 +621,29 @@ export default function App() {
     return retryHydrationClient.current
   }, [])
 
+  const getLibraryHydrationClient = useCallback(() => {
+    libraryHydrationClient.current ??= new LibraryHydrationClient()
+    return libraryHydrationClient.current
+  }, [])
+
+  const getTacticsHydrationClient = useCallback(() => {
+    tacticsHydrationClient.current ??= new TacticsHydrationClient()
+    return tacticsHydrationClient.current
+  }, [])
+
   const hydrateTrainingRetryHistory = useCallback((): Promise<RetryItem[]> => {
     if (retryHistoryReady.current) return Promise.resolve(retryItemsRef.current)
     if (retryHistoryHydration.current) return retryHistoryHydration.current
 
     setRetryHistoryLoading(true)
+    setRetryHistoryError(false)
     const requestVersion = ++retryHistoryRequestVersion.current
     const work = (async () => {
       try {
         // Reading the raw localStorage string is cheap. The expensive JSON,
         // chess-position and legal-move validation happens only in the
         // dedicated Worker below, after Train has explicitly requested it.
-        let raw = readBrowserRetryItemsRaw()
+        let raw = readBrowserRetryItemsRawStrict()
         let items: RetryItem[] | null = null
         // Another tab or a just-saved Review exercise can rewrite the mirror
         // while its previous snapshot is being checked. A bounded retry keeps
@@ -619,26 +651,29 @@ export default function App() {
         // letting a pathological external writer hold Train indefinitely.
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const candidate = await getRetryHydrationClient().hydrate(raw)
-          const latestRaw = readBrowserRetryItemsRaw()
+          const latestRaw = readBrowserRetryItemsRawStrict()
           if (latestRaw === raw) {
             items = candidate
             break
           }
           raw = latestRaw
         }
-        if (items === null) {
-          // Preserve any in-memory Review item and leave this history marked
-          // unhydrated so a future Train intent can safely try again.
-          return retryItemsRef.current
+        if (items === null) throw new Error('Saved practice changed while KnightClub was opening it.')
+        if (requestVersion !== retryHistoryRequestVersion.current) {
+          throw new Error('Saved-practice hydration was superseded.')
         }
         retryHistoryReady.current = true
         setRetryItems((current) => mergeRetryItems(items, current))
+        setRetryHistoryError(false)
         return items
-      } catch {
-        // A malformed mirror is already represented by an empty successful
-        // result. This path is only an unexpected Worker/client failure; keep
-        // the queue usable and allow a later Train intent to try again.
-        return []
+      } catch (error) {
+        // A malformed mirror is already an empty successful result. This path
+        // means storage or its Worker could not be read, so Train must not
+        // falsely claim the private queue is empty.
+        if (requestVersion === retryHistoryRequestVersion.current) {
+          setRetryHistoryError(true)
+        }
+        throw error
       } finally {
         if (requestVersion === retryHistoryRequestVersion.current) {
           retryHistoryHydration.current = null
@@ -649,6 +684,148 @@ export default function App() {
     retryHistoryHydration.current = work
     return work
   }, [getRetryHydrationClient])
+
+  const retryTrainingRetryHistory = useCallback(() => {
+    retryHistoryReady.current = false
+    void hydrateTrainingRetryHistory().catch(() => {})
+  }, [hydrateTrainingRetryHistory])
+
+  const hydrateBrowserLibrary = useCallback((): Promise<StoredGame[]> => {
+    if (libraryHistoryReady.current) return Promise.resolve(libraryItemsRef.current)
+    if (libraryHistoryHydration.current) return libraryHistoryHydration.current
+
+    setLibraryLoadState('loading')
+    const requestVersion = ++libraryHistoryRequestVersion.current
+    const work = (async () => {
+      try {
+        // Keep the UI-thread work to one short localStorage read. JSON and
+        // PGN normalization happen in the dedicated Worker after the Library
+        // surface has painted.
+        let raw = readBrowserLibraryRawStrict()
+        let games: StoredGame[] | null = null
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const candidate = await getLibraryHydrationClient().hydrate(raw)
+          const latestRaw = readBrowserLibraryRawStrict()
+          if (latestRaw === raw) {
+            games = candidate
+            break
+          }
+          raw = latestRaw
+        }
+        if (games === null) throw new Error('Saved games changed while KnightClub was opening them.')
+        if (requestVersion !== libraryHistoryRequestVersion.current) {
+          throw new Error('Saved-game hydration was superseded.')
+        }
+        libraryHistoryReady.current = true
+        setLibrary((current) => mergeLibraryGames(games, current))
+        setLibraryLoadState('ready')
+        return games
+      } catch (error) {
+        // The parser already fails closed for malformed local data. This is
+        // only an unexpected Worker/client failure, so retain any current
+        // game and give Library an explicit retry instead of clearing it.
+        if (requestVersion === libraryHistoryRequestVersion.current) {
+          setLibraryLoadState('error')
+        }
+        throw error
+      } finally {
+        if (requestVersion === libraryHistoryRequestVersion.current) {
+          libraryHistoryHydration.current = null
+        }
+      }
+    })()
+    libraryHistoryHydration.current = work
+    return work
+  }, [getLibraryHydrationClient])
+
+  const retryBrowserLibraryLoad = useCallback(() => {
+    if (libraryLoadState !== 'error') return
+    libraryHistoryReady.current = false
+    void hydrateBrowserLibrary().catch(() => {})
+  }, [hydrateBrowserLibrary, libraryLoadState])
+
+  const hydrateBrowserTacticsHistory = useCallback((): Promise<TacticsState> => {
+    if (tacticsHistoryReady.current) return Promise.resolve(tacticsStateRef.current)
+    if (tacticsHistoryHydration.current) return tacticsHistoryHydration.current
+
+    setTacticsHistoryLoading(true)
+    setTacticsHistoryError(false)
+    const requestVersion = ++tacticsHistoryRequestVersion.current
+    const work = (async () => {
+      try {
+        // As with retry history, only the opaque storage read happens on the
+        // UI thread. Shape validation and bounded parsing run after Train is
+        // requested, in a Worker whenever the runtime allows it.
+        let raw = readBrowserTacticsStateRawStrict()
+        let hydrated: TacticsState | null = null
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const candidate = await getTacticsHydrationClient().hydrate(raw)
+          const latestRaw = readBrowserTacticsStateRawStrict()
+          if (latestRaw === raw) {
+            hydrated = candidate
+            break
+          }
+          raw = latestRaw
+        }
+        if (hydrated === null) throw new Error('Tactics history changed while KnightClub was opening it.')
+        if (requestVersion !== tacticsHistoryRequestVersion.current) {
+          throw new Error('Tactics-history hydration was superseded.')
+        }
+        tacticsHistoryReady.current = true
+        setTacticsState((current) => {
+          const merged = mergeTacticsState(hydrated, current)
+          tacticsStateRef.current = merged
+          return merged
+        })
+        setTacticsHistoryError(false)
+        return hydrated
+      } catch (error) {
+        // Malformed data is already an empty successful snapshot. A storage
+        // or Worker failure is different: preserve current progress and let
+        // the player explicitly retry rather than presenting a false fresh
+        // Tactics Sprint.
+        if (requestVersion === tacticsHistoryRequestVersion.current) {
+          setTacticsHistoryError(true)
+        }
+        throw error
+      } finally {
+        if (requestVersion === tacticsHistoryRequestVersion.current) {
+          tacticsHistoryHydration.current = null
+          setTacticsHistoryLoading(false)
+        }
+      }
+    })()
+    tacticsHistoryHydration.current = work
+    return work
+  }, [getTacticsHydrationClient])
+
+  const retryBrowserTacticsHistory = useCallback(() => {
+    tacticsHistoryReady.current = false
+    void hydrateBrowserTacticsHistory().catch(() => {})
+  }, [hydrateBrowserTacticsHistory])
+
+  const cancelBrowserTrainingHydration = useCallback((message: string) => {
+    if (retryHistoryHydration.current) {
+      retryHistoryRequestVersion.current += 1
+      retryHistoryHydration.current = null
+      retryHydrationClient.current?.cancel(message)
+      setRetryHistoryLoading(false)
+    }
+    if (tacticsHistoryHydration.current) {
+      tacticsHistoryRequestVersion.current += 1
+      tacticsHistoryHydration.current = null
+      tacticsHydrationClient.current?.cancel(message)
+      setTacticsHistoryLoading(false)
+    }
+  }, [])
+
+  const cancelBrowserLibraryHydration = useCallback((message: string) => {
+    if (!libraryHistoryHydration.current) return
+    libraryHistoryRequestVersion.current += 1
+    libraryHistoryHydration.current = null
+    libraryHydrationClient.current?.cancel(message)
+    setLibraryLoadState((current) => current === 'loading' ? 'idle' : current)
+  }, [])
 
   const releaseIdleBrowserRuntimeForReview = useCallback(() => {
     botClient.current?.releaseIdleBrowserRuntime()
@@ -708,6 +885,7 @@ export default function App() {
     [previewMove],
   )
   const meta = pageMeta[tab]
+  const libraryWorkspaceOpen = tab === 'library' || tab === 'insights'
   const topColor = orientation === 'white' ? 'black' : 'white'
   const bottomColor = orientation === 'white' ? 'white' : 'black'
   const botColor = oppositeColor(humanColor)
@@ -889,6 +1067,18 @@ export default function App() {
     if (libraryLoadState === 'error') setLibraryLoadState('idle')
   }, [libraryLoadState])
 
+  const retryLibraryLoad = useCallback(() => {
+    if (!desktop) {
+      retryBrowserLibraryLoad()
+      return
+    }
+    if (databaseReady) {
+      retryDesktopLibraryLoad()
+      return
+    }
+    window.location.reload()
+  }, [databaseReady, desktop, retryBrowserLibraryLoad, retryDesktopLibraryLoad])
+
   const reviewStore = useMemo(() => ({
     load: async (reviewKey: string) => {
       if (desktop && database && databaseReady) return database.loadReview(reviewKey)
@@ -948,7 +1138,13 @@ export default function App() {
 
   const recordTacticAttempt = useCallback((puzzle: TacticPuzzle, result: TacticsSprintResult): Promise<void> => {
     const write = async () => {
-      const transition = recordTacticsTerminalAttempt(tacticsStateRef.current, puzzle, {
+      // A terminal click can race the Train tab's first hydration frame. Join
+      // it here as a final guard so an old browser snapshot can never replace
+      // the just-recorded result after the player has already solved a puzzle.
+      const hydrated = desktop
+        ? tacticsStateRef.current
+        : await hydrateBrowserTacticsHistory()
+      const transition = recordTacticsTerminalAttempt(mergeTacticsState(hydrated, tacticsStateRef.current), puzzle, {
         attemptId: createTacticsAttemptId(),
         outcome: result.outcome,
         elapsedMs: result.elapsedMs,
@@ -974,15 +1170,15 @@ export default function App() {
       reportDatabaseError(error)
       throw error
     })
-  }, [database, databaseReady, desktop, reportDatabaseError])
+  }, [database, databaseReady, desktop, hydrateBrowserTacticsHistory, reportDatabaseError])
 
   const openRetryQueue = useCallback((retryKey: string) => {
     setRequestedRetryKey(retryKey)
     // A Review → Train handoff should never flash an empty personal queue
     // while the previously saved browser mirror is still being validated.
-    void hydrateTrainingRetryHistory()
+    if (!desktop) void hydrateTrainingRetryHistory().catch(() => {})
     navigateTo('train')
-  }, [hydrateTrainingRetryHistory, navigateTo])
+  }, [desktop, hydrateTrainingRetryHistory, navigateTo])
 
   const returnToReview = useCallback((item: RetryItem) => {
     setRequestedRetryKey(null)
@@ -1024,6 +1220,10 @@ export default function App() {
   const clearPersistedLibrary = () => {
     // A response that began before Clear must never restore deleted rows.
     libraryRequestVersion.current += 1
+    libraryHistoryRequestVersion.current += 1
+    libraryHistoryHydration.current = null
+    libraryHydrationClient.current?.cancel('Saved games were cleared.')
+    libraryHistoryReady.current = true
     clearLibrary()
     setLibrary([])
     setLibraryRevealCount(LIBRARY_PAGE_SIZE)
@@ -1645,31 +1845,47 @@ export default function App() {
         let bootstrap = await database.bootstrap()
         let nativeRetries = await database.listRetryItems()
         let nativeTactics = await database.listTacticsState()
-        if (bootstrap.isEmpty) {
+        let browserRetries: RetryItem[] = []
+        let browserTactics = createTacticsState()
+        const legacyMigration = bootstrap.isEmpty
+        if (legacyMigration) {
+          // An empty SQLite store can be a first desktop launch with bounded
+          // browser history to migrate. Confirm every required mirror before
+          // mutating SQLite: an inaccessible Worker/store must leave this
+          // migration retryable, never import an old library as an empty one.
+          const browserLibrary = await hydrateBrowserLibrary()
+          if (cancelled) return
+          browserRetries = await hydrateTrainingRetryHistory()
+          if (cancelled) return
+          browserTactics = await hydrateBrowserTacticsHistory()
+          if (cancelled) return
           await database.importLegacy({
             activeSession: loadActiveSession(),
             preferences: loadPreferences(),
-            games: loadLibrary(),
+            games: browserLibrary,
           })
+          if (cancelled) return
           bootstrap = await database.bootstrap()
           nativeRetries = await database.listRetryItems()
           nativeTactics = await database.listTacticsState()
         }
-        // The browser mirror can be a full 500-position queue. It is parsed
-        // by the same local Worker used by the Train surface, never during
-        // Play's initial render or as synchronous desktop bootstrap work.
-        const browserRetries = await hydrateTrainingRetryHistory()
         const retriesByKey = new Map(nativeRetries.map((item) => [item.retryKey, item]))
         for (const item of mergeRetryItems(browserRetries, retryItemsRef.current)) {
+          if (cancelled) return
           const native = retriesByKey.get(item.retryKey)
           if (native && native.updatedAt >= item.updatedAt) continue
           await database.saveRetryItem(item)
           retriesByKey.set(item.retryKey, item)
         }
-        const browserTactics = loadBrowserTacticsState()
-        const mergedTactics = mergeTacticsState(nativeTactics, browserTactics, tacticsStateRef.current)
-        nativeTactics = await database.mergeTacticsState(mergedTactics)
-        saveBrowserTacticsState(nativeTactics)
+        const hasPendingInMemoryTactics = tacticsStateRef.current.progress.length > 0
+          || tacticsStateRef.current.attempts.length > 0
+        if (legacyMigration || hasPendingInMemoryTactics) {
+          const mergedTactics = mergeTacticsState(nativeTactics, browserTactics, tacticsStateRef.current)
+          nativeTactics = await database.mergeTacticsState(mergedTactics)
+          // SQLite is now authoritative; a blocked compatibility mirror must
+          // not make an otherwise successful desktop startup look unavailable.
+          try { saveBrowserTacticsState(nativeTactics) } catch { /* native state remains durable */ }
+        }
         if (cancelled) return
         const preferences = normalizePreferences(bootstrap.preferences)
         const restored = restoreSession(bootstrap.activeSession, preferences.botProfileId)
@@ -1691,8 +1907,14 @@ export default function App() {
         // is still running. Merge current React state as well as that mirror
         // so a newly queued exercise never blinks away.
         setRetryItems((current) => mergeRetryItems([...retriesByKey.values()], current))
+        retryHistoryReady.current = true
+        setRetryHistoryLoading(false)
+        setRetryHistoryError(false)
         tacticsStateRef.current = nativeTactics
         setTacticsState(nativeTactics)
+        tacticsHistoryReady.current = true
+        setTacticsHistoryLoading(false)
+        setTacticsHistoryError(false)
         savedPosition.current = terminalSessionFingerprint(
           restored.game.fen(),
           restored.termination?.result ?? gameResult(restored.game),
@@ -1708,17 +1930,28 @@ export default function App() {
       } catch (error) {
         if (!cancelled) {
           setLibraryLoadState('error')
+          setRetryHistoryLoading(false)
+          setRetryHistoryError(true)
+          setTacticsHistoryLoading(false)
+          setTacticsHistoryError(true)
           reportDatabaseError(error)
         }
       }
     })()
     return () => { cancelled = true }
-  }, [database, hydrateTrainingRetryHistory, reportDatabaseError, setGame])
+  }, [database, hydrateBrowserLibrary, hydrateBrowserTacticsHistory, hydrateTrainingRetryHistory, reportDatabaseError, setGame])
 
   useEffect(() => {
-    if (tab !== 'train') return
-    void hydrateTrainingRetryHistory()
-  }, [hydrateTrainingRetryHistory, tab])
+    if (desktop || tab !== 'train') return
+    void hydrateTrainingRetryHistory().catch(() => {})
+    void hydrateBrowserTacticsHistory().catch(() => {})
+    return () => {
+      // Leaving Train must release a pending history Worker instead of
+      // allowing it to compete with a newly resumed live game on low-power
+      // hardware. Desktop migration owns its separate one-time requests.
+      cancelBrowserTrainingHydration('Train was closed before local history finished loading.')
+    }
+  }, [cancelBrowserTrainingHydration, desktop, hydrateBrowserTacticsHistory, hydrateTrainingRetryHistory, tab])
 
   useEffect(() => () => {
     // StrictMode deliberately mounts, cleans up and mounts again in
@@ -1728,12 +1961,27 @@ export default function App() {
     retryHistoryHydration.current = null
     retryHydrationClient.current?.dispose()
     retryHydrationClient.current = null
+    libraryHistoryRequestVersion.current += 1
+    libraryHistoryHydration.current = null
+    libraryHydrationClient.current?.dispose()
+    libraryHydrationClient.current = null
+    tacticsHistoryRequestVersion.current += 1
+    tacticsHistoryHydration.current = null
+    tacticsHydrationClient.current?.dispose()
+    tacticsHydrationClient.current = null
   }, [])
 
   useEffect(() => {
-    if (tab !== 'library' && tab !== 'insights') return
-    loadDesktopLibrary()
-  }, [tab, loadDesktopLibrary])
+    if (desktop) {
+      if (libraryWorkspaceOpen) loadDesktopLibrary()
+      return
+    }
+    if (!libraryWorkspaceOpen) return
+    void hydrateBrowserLibrary().catch(() => {})
+    return () => {
+      cancelBrowserLibraryHydration('Library was closed before saved games finished loading.')
+    }
+  }, [cancelBrowserLibraryHydration, desktop, hydrateBrowserLibrary, libraryWorkspaceOpen, loadDesktopLibrary])
 
   useEffect(() => {
     const session = {
@@ -2353,8 +2601,13 @@ export default function App() {
               <TrainingWorkspace
                 tacticProgress={tacticProgress}
                 onRecordTacticAttempt={recordTacticAttempt}
+                tacticsHistoryLoading={tacticsHistoryLoading || (!tacticsHistoryReady.current && !tacticsHistoryError)}
+                tacticsHistoryError={tacticsHistoryError}
+                onRetryTacticsHistory={desktop ? () => window.location.reload() : retryBrowserTacticsHistory}
                 retryItems={retryItems}
-                retryHistoryLoading={retryHistoryLoading}
+                retryHistoryLoading={retryHistoryLoading || (!retryHistoryReady.current && !retryHistoryError)}
+                retryHistoryError={retryHistoryError}
+                onRetryRetryHistory={desktop ? () => window.location.reload() : retryTrainingRetryHistory}
                 requestedRetryKey={requestedRetryKey}
                 onSaveRetryItem={saveRetryItem}
                 onDeleteRetryItem={deleteRetryItem}
@@ -2371,12 +2624,14 @@ export default function App() {
               <div><span className="eyebrow">On-device library</span><h2>Saved games</h2><p className={`database-status database-status--${databaseStatus.kind}`} role="status">{databaseStatus.message}</p></div>
               <button className="danger-button" type="button" disabled={libraryLoadState !== 'ready' || !library.length} onClick={clearPersistedLibrary}>Clear library</button>
             </div>
-            {desktop && libraryLoadState !== 'ready' ? (
+            {libraryLoadState !== 'ready' ? (
               <div className="empty-panel" aria-busy={libraryLoadState !== 'error'} role={libraryLoadState === 'error' ? 'alert' : 'status'}>
                 {libraryLoadState === 'error' ? <Library size={30} /> : <RefreshCw className="spin" size={30} aria-hidden="true" />}
                 <strong>{libraryLoadState === 'error' ? 'Couldn’t load saved games' : 'Loading saved games'}</strong>
-                <span>{libraryLoadState === 'error' ? databaseStatus.message : 'Your board stays available while KnightClub opens this private library.'}</span>
-                {libraryLoadState === 'error' && <button className="secondary-button" type="button" onClick={databaseReady ? retryDesktopLibraryLoad : () => window.location.reload()}>{databaseReady ? 'Try again' : 'Reload KnightClub'}</button>}
+                <span>{libraryLoadState === 'error'
+                  ? desktop ? databaseStatus.message : 'Your saved games remain private in this browser. Try opening the library again.'
+                  : 'Your board stays available while KnightClub opens this private library.'}</span>
+                {libraryLoadState === 'error' && <button className="secondary-button" type="button" onClick={retryLibraryLoad}>{desktop && !databaseReady ? 'Reload KnightClub' : 'Try again'}</button>}
               </div>
             ) : library.length ? <>
               <div className="library-tools" role="search">
@@ -2396,13 +2651,15 @@ export default function App() {
         )}
 
         {tab === 'insights' && (
-          desktop && libraryLoadState !== 'ready' ? (
+          libraryLoadState !== 'ready' ? (
             <section className="content-card content-card--wide">
               <div className="empty-panel" aria-busy={libraryLoadState !== 'error'} role={libraryLoadState === 'error' ? 'alert' : 'status'}>
                 {libraryLoadState === 'error' ? <BarChart3 size={30} /> : <RefreshCw className="spin" size={30} aria-hidden="true" />}
                 <strong>{libraryLoadState === 'error' ? 'Couldn’t load insights' : 'Loading your local insights'}</strong>
-                <span>{libraryLoadState === 'error' ? databaseStatus.message : 'KnightClub is opening your private game history on demand.'}</span>
-                {libraryLoadState === 'error' && <button className="secondary-button" type="button" onClick={databaseReady ? retryDesktopLibraryLoad : () => window.location.reload()}>{databaseReady ? 'Try again' : 'Reload KnightClub'}</button>}
+                <span>{libraryLoadState === 'error'
+                  ? desktop ? databaseStatus.message : 'Your saved games remain private in this browser. Try opening insights again.'
+                  : 'KnightClub is opening your private game history on demand.'}</span>
+                {libraryLoadState === 'error' && <button className="secondary-button" type="button" onClick={retryLibraryLoad}>{desktop && !databaseReady ? 'Reload KnightClub' : 'Try again'}</button>}
               </div>
             </section>
           ) : (

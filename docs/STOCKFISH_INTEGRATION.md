@@ -41,7 +41,7 @@ Candidates must be regular executable files. The path is passed directly to `std
 | Balanced | 1700 | 8 | 60 ms | 3,000 | 1 | 16 MB |
 | Strong | 2200 | 14 | 90 ms | 7,000 | 1 | 16 MB |
 
-All three enable `UCI_LimitStrength` and stop on whichever time or node limit arrives first. The UI separately uses a short cancellable display floor (260/360/480 ms) so lower compute budgets do not make play look accidentally instantaneous. The 1k/3k/7k caps reduce normal bot search work by roughly 50%/40%/42% from the preceding defaults while preserving the one-thread, three-level difficulty ordering; Strong also releases 16 MB of retained Hash. These are initial product presets, not rating guarantees; future calibration should use a fixed test suite and recorded hardware.
+All three enable `UCI_LimitStrength` and stop on whichever time or node limit arrives first. The UI separately uses a short cancellable display floor (260/360/480 ms) so lower compute budgets do not make play look accidentally instantaneous. The 1k/3k/7k caps reduce normal bot search work by roughly 50%/40%/42% from the preceding defaults while preserving the one-thread, three-level difficulty ordering; Strong also releases 16 MB of retained Hash. The TypeScript browser/native adapters and the Rust `stockfish_best_move` command independently apply the same guard to Elo and Custom Play requests, so an old preference, direct renderer call or desktop payload cannot turn an ordinary bot reply into a 30-second, multi-threaded or multi-gigabyte search. These are initial product presets, not rating guarantees; future calibration should use a fixed test suite and recorded hardware.
 
 ## Elo and custom profiles
 
@@ -49,6 +49,7 @@ All three enable `UCI_LimitStrength` and stop on whichever time or node limit ar
 - **Custom UCI limits:** additionally exposes Skill Level and the strength-limit switch.
 - Bounds: Elo 1320–3190, Skill 0–20, move time 50–30000 ms, depth 1–40, nodes 1,000–100,000,000, MultiPV 1–5, threads 1–32 and Hash 16–4096 MB.
 - A typed setting outside those bounds, with a fraction or an invalid numeric draft is rejected with inline feedback and does not change the current request. Persisted/direct malformed fields fall back to their low-cost defaults; they are never rounded or clamped into an upper resource bound. The browser UI applies its effective 128 MB Hash ceiling as an additional validation limit.
+- These are persisted preference bounds, not permission to enlarge a live bot reply. Play preserves Elo/skill/limit-strength identity and honours a smaller valid time/node choice, then caps every reply at its selected Easy/Balanced/Strong time/node ceiling, one thread, 16 MB Hash, no depth cap and baseline one PV. A named profile can request only a second PV from that same bounded command. Review analysis keeps its separate, explicitly selected resource contract.
 - `go` always has a move-time ceiling and may additionally include depth and nodes; Stockfish stops on the first reached limit.
 
 ## Cancellation and recovery

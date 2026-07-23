@@ -1,9 +1,9 @@
 import type { BotLevel } from '../domain/chess'
 import {
   DEFAULT_ENGINE_SETTINGS,
-  normalizeEngineSettings,
   type EngineSettings,
 } from './engineSettings'
+import { resolvePlayEngineBudget } from './playEngineBudget'
 
 const ENGINE_PATH = 'wasm://stockfish-18-lite-single'
 const ENGINE_FILE = 'stockfish/stockfish-18-lite-single.js'
@@ -192,7 +192,10 @@ export function resolveBrowserPlayOptions(
   settings: EngineSettings = DEFAULT_ENGINE_SETTINGS,
   candidateCount?: 1 | 2,
 ): BrowserSearchOptions {
-  const normalized = normalizeEngineSettings(settings)
+  // This is the browser's real Play request boundary. Keep custom/Elo
+  // preferences useful for strength identity while enforcing the same finite
+  // low-resource budget as native bot turns.
+  const normalized = resolvePlayEngineBudget(level, settings)
   const requestedCandidateCount = validCandidateCount(candidateCount)
   if (normalized.profile === 'preset') {
     const preset = playPreset(level)
@@ -206,8 +209,8 @@ export function resolveBrowserPlayOptions(
     depth: normalized.depth,
     nodes: normalized.nodes,
     // A named profile asks for at least two lines from the same bounded `go`
-    // request. Respect an explicitly higher custom setting instead of
-    // silently lowering a user-selected analysis budget.
+    // request. Arbitrary Custom MultiPV belongs to Review analysis, not a
+    // live reply, so the optional profile request is the only allowed lift.
     multiPv: requestedCandidateCount === undefined ? normalized.multiPv : Math.max(normalized.multiPv, requestedCandidateCount),
     hashMb: Math.min(normalized.hashMb, MAX_BROWSER_HASH_MB),
     elo: normalized.elo,

@@ -53,7 +53,7 @@ describe('progressive library rendering', () => {
 })
 
 describe('bot player-side setup', () => {
-  it('does not read the personal retry mirror while rendering the first Play board', () => {
+  it('does not parse personal history while rendering the first Play board', () => {
     const getItem = vi.fn(() => null)
     vi.stubGlobal('localStorage', {
       getItem,
@@ -65,6 +65,8 @@ describe('bot player-side setup', () => {
 
     expect(markup).toContain('aria-label="Chess board"')
     expect(getItem).not.toHaveBeenCalledWith('knightclub.retry-items.v1')
+    expect(getItem).not.toHaveBeenCalledWith('knightclub.game-library.v1')
+    expect(getItem).not.toHaveBeenCalledWith('knightclub.tactics-state.v1')
   })
 
   it('presents accessible White, Black and Random choices for a fresh game', () => {

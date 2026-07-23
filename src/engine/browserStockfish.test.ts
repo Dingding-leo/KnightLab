@@ -79,9 +79,19 @@ describe('browser Stockfish UCI parsing', () => {
     expect(resolveBrowserPlayOptions('balanced', {
       ...DEFAULT_ENGINE_SETTINGS,
       profile: 'custom',
+      moveTimeMs: 30_000,
+      nodes: 100_000_000,
       hashMb: 4096,
+      threads: 32,
       multiPv: 4,
-    })).toMatchObject({ hashMb: 128, multiPv: 4 })
+      depth: 40,
+    })).toMatchObject({
+      moveTimeMs: 60,
+      nodes: 3_000,
+      hashMb: 16,
+      multiPv: 1,
+      depth: null,
+    })
     expect(resolveBrowserPlayOptions('balanced', DEFAULT_ENGINE_SETTINGS, 2)).toMatchObject({
       moveTimeMs: 60,
       nodes: 3_000,

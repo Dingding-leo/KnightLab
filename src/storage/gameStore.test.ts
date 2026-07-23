@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  LIBRARY_STORAGE_KEY,
   markLibraryGamesReviewed,
   mergeLibraryGames,
   normalizeActiveSession,
   normalizeLibrary,
+  parseBrowserLibraryRaw,
+  readBrowserLibraryRaw,
+  readBrowserLibraryRawStrict,
 } from './gameStore'
 
 const validGame = {
@@ -60,6 +64,23 @@ describe('game library normalization', () => {
       validGame,
       { ...validGame, id: 'unknown-profile', botProfileId: 'champion' },
     ])).toEqual([validGame])
+  })
+
+  it('reads the raw browser mirror separately from its pure normalized parser', () => {
+    const raw = JSON.stringify([validGame, { id: 'missing-required-fields' }])
+    const getItem = (key: string) => key === LIBRARY_STORAGE_KEY ? raw : null
+
+    expect(readBrowserLibraryRaw({ getItem })).toBe(raw)
+    expect(readBrowserLibraryRawStrict({ getItem })).toBe(raw)
+    expect(parseBrowserLibraryRaw(raw)).toEqual([validGame])
+    expect(parseBrowserLibraryRaw('{ definitely not JSON')).toEqual([])
+  })
+
+  it('keeps an unreadable mirror distinguishable for deferred Library recovery', () => {
+    const unreadable = { getItem: () => { throw new Error('Storage is blocked.') } }
+
+    expect(readBrowserLibraryRaw(unreadable)).toBeNull()
+    expect(() => readBrowserLibraryRawStrict(unreadable)).toThrow('Storage is blocked.')
   })
 
   it('keeps newer in-memory saves and review flags when a delayed native list arrives', () => {

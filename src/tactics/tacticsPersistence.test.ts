@@ -12,6 +12,9 @@ import {
   loadBrowserTacticsState,
   mergeBrowserTacticsState,
   mergeTacticsState,
+  parseBrowserTacticsStateRaw,
+  readBrowserTacticsStateRaw,
+  readBrowserTacticsStateRawStrict,
   recordTacticsTerminalAttempt,
   saveBrowserTacticsState,
   tacticsStateToTacticProgress,
@@ -271,5 +274,25 @@ describe('native-compatible tactics persistence', () => {
     expect(loadBrowserTacticsState(storage)).toEqual(createTacticsState())
     storage.setItem(TACTICS_STORAGE_KEY, 'x'.repeat(MAX_TACTICS_STATE_BYTES + 1))
     expect(loadBrowserTacticsState(storage)).toEqual(createTacticsState())
+  })
+
+  it('separates a safe raw browser read from the shared fail-closed state parser', () => {
+    const storage = new MemoryStorage()
+    const state = solved(createTacticsState(), 'attempt-raw-read', '2026-07-22T00:00:00.000Z').state
+    storage.setItem(TACTICS_STORAGE_KEY, JSON.stringify(state))
+
+    const raw = readBrowserTacticsStateRaw(storage)
+    expect(raw).toBe(storage.getItem(TACTICS_STORAGE_KEY))
+    expect(readBrowserTacticsStateRawStrict(storage)).toBe(raw)
+    expect(parseBrowserTacticsStateRaw(raw)).toEqual(state)
+    expect(parseBrowserTacticsStateRaw('{ definitely not JSON')).toEqual(createTacticsState())
+
+    const unreadable: TacticsStorage = {
+      getItem: () => { throw new Error('Storage is blocked.') },
+      setItem: () => {},
+      removeItem: () => {},
+    }
+    expect(readBrowserTacticsStateRaw(unreadable)).toBeNull()
+    expect(() => readBrowserTacticsStateRawStrict(unreadable)).toThrow('Storage is blocked.')
   })
 })
