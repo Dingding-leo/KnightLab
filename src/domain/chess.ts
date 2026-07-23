@@ -177,10 +177,47 @@ export function evaluateMaterial(game: Chess, perspective: Color = 'w'): number 
   return score
 }
 
+export interface GameSummary {
+  /** Whether chess.js considers the board position complete, without a manual resignation or timeout. */
+  finished: boolean
+  result: string
+  status: string
+}
+
+/**
+ * Resolves the complete board outcome in one ordered rules pass.
+ *
+ * Play renders for selections, premoves and notices without replacing its
+ * immutable Chess instance. Keeping status, result and terminal state
+ * together lets that UI memoize one summary instead of each render asking
+ * chess.js to generate the same legal moves several times. The explicit draw
+ * cases are the complete public `isDraw()` contract in the pinned chess.js
+ * version; retain their established status wording and priority here.
+ */
+export function gameSummary(game: Chess): GameSummary {
+  if (game.isCheckmate()) {
+    const winner = game.turn() === 'w' ? 'Black' : 'White'
+    return {
+      finished: true,
+      result: game.turn() === 'w' ? '0-1' : '1-0',
+      status: `Checkmate — ${winner} wins`,
+    }
+  }
+  if (game.isStalemate()) return { finished: true, result: '1/2-1/2', status: 'Draw by stalemate' }
+  if (game.isThreefoldRepetition()) return { finished: true, result: '1/2-1/2', status: 'Draw by threefold repetition' }
+  if (game.isInsufficientMaterial()) return { finished: true, result: '1/2-1/2', status: 'Draw by insufficient material' }
+  if (game.isDrawByFiftyMoves()) return { finished: true, result: '1/2-1/2', status: 'Draw by fifty-move rule' }
+  return {
+    finished: false,
+    result: '*',
+    status: game.inCheck()
+      ? `${game.turn() === 'w' ? 'White' : 'Black'} to move — check`
+      : `${game.turn() === 'w' ? 'White' : 'Black'} to move`,
+  }
+}
+
 export function gameResult(game: Chess): string {
-  if (game.isCheckmate()) return game.turn() === 'w' ? '0-1' : '1-0'
-  if (game.isDraw()) return '1/2-1/2'
-  return '*'
+  return gameSummary(game).result
 }
 
 export function recordedGameResult(game: Chess): string {
@@ -312,16 +349,7 @@ export function completedPgn(game: Chess, startFen: string, result: string, term
 }
 
 export function gameStatus(game: Chess): string {
-  if (game.isCheckmate()) {
-    return `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins`
-  }
-  if (game.isStalemate()) return 'Draw by stalemate'
-  if (game.isThreefoldRepetition()) return 'Draw by threefold repetition'
-  if (game.isInsufficientMaterial()) return 'Draw by insufficient material'
-  if (game.isDrawByFiftyMoves()) return 'Draw by fifty-move rule'
-  if (game.isDraw()) return 'Draw'
-  if (game.inCheck()) return `${game.turn() === 'w' ? 'White' : 'Black'} to move — check`
-  return `${game.turn() === 'w' ? 'White' : 'Black'} to move`
+  return gameSummary(game).status
 }
 
 export function legalMovesFrom(game: Chess, square: Square): Move[] {

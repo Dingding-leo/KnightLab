@@ -114,6 +114,7 @@
 
 ### Changed
 
+- Play now derives board completion, result and status through one memoized per-position rules pass, and memoizes material by the displayed position, so selecting a piece, queuing a premove or receiving a status update does not repeat the same legal-move generation on the interaction path
 - Desktop Play, Verify and full Review now serialize through one native Stockfish supervisor and one Hash allocation, while retaining separate cancellation state for Play and Review requests
 - A newly completed review is now detached, strictly validated and frozen once; its immediate browser or SQLite save reuses that private snapshot instead of replaying the complete PGN again, while cloned or tampered records still fail closed before any write
 - Live Play PGN export and active-session persistence now serialize the existing verbose move snapshot instead of asking `chess.js` to undo/replay the complete game after every move; standard/setup/promotion/result output remains compatible and annotated imports retain the authoritative fallback

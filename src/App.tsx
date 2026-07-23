@@ -45,7 +45,7 @@ import {
   evaluateMaterial,
   formatEvaluation,
   gameResult,
-  gameStatus,
+  gameSummary,
   hasMatingMaterial,
   legalMovesFrom,
   pgnFromHistory,
@@ -1111,6 +1111,12 @@ export default function App() {
     () => previewPly === null ? game : previewGameAtPly(startFen, verbose, previewPly),
     [game, previewPly, startFen, verbose],
   )
+  // Selecting a piece, queuing a premove or receiving a notice does not
+  // replace `game`. Cache these board-only facts by its immutable instance so
+  // those interaction renders do not repeat chess.js terminal checks or a
+  // full material scan.
+  const liveGameSummary = useMemo(() => gameSummary(game), [game])
+  const previewMaterial = useMemo(() => evaluateMaterial(previewGame, 'w'), [previewGame])
   const positionTransfer = useMemo(
     () => positionTransferFor(previewGame, previewing),
     [previewGame, previewing],
@@ -1150,7 +1156,7 @@ export default function App() {
     ? engineDetail
     : `Stockfish ${opponentStrength} · ${botProfile.openingCueLabel}`
   const opponentAvatar = isFallbackOpponent ? undefined : { initials: botProfile.initials, tone: botProfile.tone }
-  const gameFinished = game.isGameOver() || termination !== null
+  const gameFinished = liveGameSummary.finished || termination !== null
   const activeSessionRestoring = activeSessionRestoreState !== 'ready'
   const activeSessionRestoreBlocked = activeSessionRestoreState === 'blocked'
   const storedGameOpeningInProgress = storedGameOpening !== null
@@ -1184,7 +1190,7 @@ export default function App() {
   const canUndo = !previewing
     && !gameFinished
     && (mode !== 'bot' || verbose.some((move) => move.color === humanColor))
-  const currentStatus = termination?.status ?? gameStatus(game)
+  const currentStatus = termination?.status ?? liveGameSummary.status
   // A playable bot turn needs a role-aware action cue instead of making the
   // player translate a side-neutral color label. Keep every tactical/blocked
   // state above it (check, decisions, promotion, pauses and engine activity).
@@ -1215,7 +1221,7 @@ export default function App() {
   const compactBoardStatus = premoveWindow
     ? 'Bot thinking · queue premove'
     : latestBotMove ? `Your move · ${latestBotMove.san}` : boardStatus
-  const currentResult = termination?.result ?? gameResult(game)
+  const currentResult = termination?.result ?? liveGameSummary.result
   // Play already owns the exact verbose move snapshot. Reusing it avoids
   // chess.js undoing and replaying a long game merely to refresh autosave or
   // the transfer toolbar after every committed ply.
@@ -2725,9 +2731,9 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!game.isGameOver() || !clock.activeColor) return
+    if (!liveGameSummary.finished || !clock.activeColor) return
     setClock((current) => pauseClock(current, Date.now()))
-  }, [game, clock.activeColor])
+  }, [game, clock.activeColor, liveGameSummary.finished])
 
   useEffect(() => {
     const terminalFingerprint = terminalSessionFingerprint(game.fen(), currentResult, gameFinished)
@@ -3045,7 +3051,7 @@ export default function App() {
                     title={boardStatusLabel}
                   >{boardStatus}</span>
                   <span className="board-status__compact" aria-hidden="true">{compactBoardStatus}</span>
-                  <strong>Material {formatEvaluation(evaluateMaterial(previewGame, 'w'))}</strong>
+                  <strong>Material {formatEvaluation(previewMaterial)}</strong>
                 </div>
                 <div className="board-status__actions">
                   <button className="icon-button" type="button" onClick={() => setOrientation(orientation === 'white' ? 'black' : 'white')} title="Flip board">

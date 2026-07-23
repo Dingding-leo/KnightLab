@@ -85,6 +85,7 @@
 - [x] Paint-first active-session recovery: long browser PGNs plus each non-null desktop bootstrap session restore through a latest-wins one-shot Worker with a verified chess-state snapshot, bounded raw freshness fencing, input/autosave/bot lockout and an explicit safe-reset recovery state; a desktop fresh-start fences late bootstrap/migration responses and finishes with a native clear so rejected games cannot return
 - [x] Live Play PGN serialization from cached verbose moves, preserving immediate autosave/export, setup/result metadata and a conservative annotated-game fallback; known-empty chess.js comment state avoids the otherwise history-rewinding comment scan on normal moves
 - [x] Default Rowan `1. e4 e5 2. Nf3 Nc6` local opening route plus safe idle release of browser Workers or the shared desktop Stockfish process after Play is no longer active
+- [x] Per-position Play outcome/material memoization so source selection, premove and notice renders do not repeat terminal legal-move generation
 - [ ] Keyboard-complete navigation and screen-reader audit
 - [ ] Multiple original board/piece themes and optional sounds
 - [ ] Chess960 and selected offline variants

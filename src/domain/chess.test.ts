@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Chess } from 'chess.js'
-import { cloneGame, cloneGameAtPly, evaluateMaterial, gameResult, gameStatus, onlyLegalMove, previewGameAtPly } from './chess'
+import { cloneGame, cloneGameAtPly, evaluateMaterial, gameResult, gameStatus, gameSummary, onlyLegalMove, previewGameAtPly } from './chess'
 
 describe('chess domain', () => {
   it('clones move history and current position', () => {
@@ -150,5 +150,40 @@ describe('chess domain', () => {
     game.move('Qh4#')
     expect(gameResult(game)).toBe('0-1')
     expect(gameStatus(game)).toContain('Checkmate')
+  })
+
+  it('keeps one complete board outcome aligned with the established status and result helpers', () => {
+    const normal = new Chess()
+    normal.move('e4')
+    normal.move('e5')
+
+    const mate = new Chess()
+    for (const move of ['f3', 'e5', 'g4', 'Qh4#']) mate.move(move)
+
+    const stalemate = new Chess('7k/5Q2/7K/8/8/8/8/8 b - - 0 1')
+    const threefold = new Chess()
+    for (const move of ['Nf3', 'Nf6', 'Ng1', 'Ng8', 'Nf3', 'Nf6', 'Ng1', 'Ng8']) threefold.move(move)
+    const insufficient = new Chess('8/8/8/8/8/8/4k3/7K w - - 0 1')
+    const fiftyMove = new Chess('4k3/8/8/8/8/8/8/R3K3 w Q - 100 1')
+
+    for (const game of [normal, mate, stalemate, threefold, insufficient, fiftyMove]) {
+      expect(gameSummary(game)).toEqual({
+        finished: game.isGameOver(),
+        result: gameResult(game),
+        status: gameStatus(game),
+      })
+    }
+  })
+
+  it('needs one legal-move generation for a normal position summary', () => {
+    const game = new Chess()
+    for (const move of ['e4', 'e5', 'Nf3', 'Nc6']) game.move(move)
+    const moveGenerator = vi.spyOn(
+      game as unknown as { _moves: () => unknown[] },
+      '_moves',
+    )
+
+    expect(gameSummary(game)).toMatchObject({ finished: false, result: '*', status: 'White to move' })
+    expect(moveGenerator).toHaveBeenCalledOnce()
   })
 })
