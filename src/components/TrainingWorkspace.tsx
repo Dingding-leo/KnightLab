@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrainCircuit, Target } from 'lucide-react'
+import { BrainCircuit, RefreshCw, Target } from 'lucide-react'
 import type { RetryItem } from '../review/retry'
 import type { TacticProgress, TacticPuzzle } from '../tactics/tactics'
 import { RetryQueue } from './RetryQueue'
@@ -12,6 +12,8 @@ interface TrainingWorkspaceProps {
   tacticProgress: TacticProgress
   onRecordTacticAttempt: (puzzle: TacticPuzzle, result: TacticsSprintResult) => Promise<void>
   retryItems: RetryItem[]
+  /** Saved retry positions are independently validated in a local Worker. */
+  retryHistoryLoading?: boolean
   requestedRetryKey: string | null
   onSaveRetryItem: (item: RetryItem) => Promise<void>
   onDeleteRetryItem: (retryKey: string) => Promise<boolean | void>
@@ -29,6 +31,7 @@ export function TrainingWorkspace({
   tacticProgress,
   onRecordTacticAttempt,
   retryItems,
+  retryHistoryLoading = false,
   requestedRetryKey,
   onSaveRetryItem,
   onDeleteRetryItem,
@@ -60,7 +63,7 @@ export function TrainingWorkspace({
           aria-selected={source === 'personal'}
           aria-controls="train-personal-panel"
           onClick={() => setSource('personal')}
-        ><Target size={16} /><span>From your games</span><output aria-label={`${dueCount} personal positions due`}>{dueCount}</output></button>
+        ><Target size={16} /><span>From your games</span><output aria-label={retryHistoryLoading ? 'Personal positions preparing' : `${dueCount} personal positions due`}>{retryHistoryLoading ? '…' : dueCount}</output></button>
         <button
           id="train-vision-tab"
           type="button"
@@ -78,14 +81,24 @@ export function TrainingWorkspace({
       )}
       {source === 'personal' && (
         <section id="train-personal-panel" role="tabpanel" aria-labelledby="train-personal-tab">
-          <RetryQueue
-            items={retryItems}
-            requestedRetryKey={requestedRetryKey}
-            onSave={onSaveRetryItem}
-            onDelete={onDeleteRetryItem}
-            onBackToReview={onBackToReview}
-            onOpenReview={onOpenReview}
-          />
+          {retryHistoryLoading ? (
+            <div className="train-history-loading" role="status" aria-live="polite" aria-busy="true">
+              <RefreshCw className="spin" size={20} aria-hidden="true" />
+              <div>
+                <strong>Preparing your saved practice locally…</strong>
+                <span>Validating your private positions without interrupting Play.</span>
+              </div>
+            </div>
+          ) : (
+            <RetryQueue
+              items={retryItems}
+              requestedRetryKey={requestedRetryKey}
+              onSave={onSaveRetryItem}
+              onDelete={onDeleteRetryItem}
+              onBackToReview={onBackToReview}
+              onOpenReview={onOpenReview}
+            />
+          )}
         </section>
       )}
       {source === 'vision' && (

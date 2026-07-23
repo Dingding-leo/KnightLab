@@ -53,6 +53,20 @@ describe('progressive library rendering', () => {
 })
 
 describe('bot player-side setup', () => {
+  it('does not read the personal retry mirror while rendering the first Play board', () => {
+    const getItem = vi.fn(() => null)
+    vi.stubGlobal('localStorage', {
+      getItem,
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+
+    const markup = renderToStaticMarkup(<App />)
+
+    expect(markup).toContain('aria-label="Chess board"')
+    expect(getItem).not.toHaveBeenCalledWith('knightclub.retry-items.v1')
+  })
+
   it('presents accessible White, Black and Random choices for a fresh game', () => {
     const markup = renderApp()
 

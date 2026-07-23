@@ -118,6 +118,7 @@ import {
 import { HybridEngineClient, isTauriRuntime, type EngineSearchResult } from './engine/stockfishClient'
 import { engineSettingsLabel, normalizeEngineSettings } from './engine/engineSettings'
 import { playEngineFailureStatus, playEngineStatusUpdate } from './engine/playEngineStatus'
+import { shouldReleaseIdlePlayBrowserRuntime } from './engine/playRuntimeLifecycle'
 import { requestPlayMove } from './engine/playMoveRequest'
 import {
   DEFAULT_BOT_PROFILE_ID,
@@ -157,10 +158,11 @@ import {
 import {
   deleteBrowserRetryItem,
   loadBrowserRetryItem,
-  loadBrowserRetryItems,
+  readBrowserRetryItemsRaw,
   saveBrowserRetryItem,
 } from './review/retryPersistence'
 import { compareRetryItems, type RetryItem } from './review/retry'
+import { TrainingRetryHydrationClient } from './training/trainingRetryHydrationClient'
 import { SEED_TACTICS } from './tactics/seedPuzzles'
 import type { TacticPuzzle } from './tactics/tactics'
 import {
@@ -540,7 +542,11 @@ export default function App() {
   const [libraryFilter, setLibraryFilter] = useState<'all' | 'reviewed' | 'unreviewed'>('all')
   const [showAbortedGames, setShowAbortedGames] = useState(false)
   const [libraryRevealCount, setLibraryRevealCount] = useState(LIBRARY_PAGE_SIZE)
-  const [retryItems, setRetryItems] = useState<RetryItem[]>(() => loadBrowserRetryItems())
+  // A full personal queue validates up to 500 chess positions. Train owns
+  // that work, so Play starts with a tiny in-memory shell and hydrates the
+  // browser mirror only after a player asks for training.
+  const [retryItems, setRetryItems] = useState<RetryItem[]>([])
+  const [retryHistoryLoading, setRetryHistoryLoading] = useState(false)
   const [tacticsState, setTacticsState] = useState<TacticsState>(() => loadBrowserTacticsState())
   const [requestedRetryKey, setRequestedRetryKey] = useState<string | null>(null)
   const [requestedReviewTarget, setRequestedReviewTarget] = useState<{ reviewKey: string; sourcePly: number } | null>(null)
@@ -560,6 +566,10 @@ export default function App() {
   const setupAutoCollapsed = useRef(initial.game.history().length > 0)
   const premoveRef = useRef<QueuedPremove | null>(premove)
   const retryItemsRef = useRef(retryItems)
+  const retryHistoryReady = useRef(false)
+  const retryHistoryHydration = useRef<Promise<RetryItem[]> | null>(null)
+  const retryHistoryRequestVersion = useRef(0)
+  const retryHydrationClient = useRef<TrainingRetryHydrationClient | null>(null)
   const tacticsStateRef = useRef(tacticsState)
   const tacticsWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const libraryRequestVersion = useRef(0)
@@ -584,6 +594,61 @@ export default function App() {
   const navigateTo = useCallback((next: Tab) => {
     setTab((current) => current === next ? current : next)
   }, [])
+
+  const getRetryHydrationClient = useCallback(() => {
+    retryHydrationClient.current ??= new TrainingRetryHydrationClient()
+    return retryHydrationClient.current
+  }, [])
+
+  const hydrateTrainingRetryHistory = useCallback((): Promise<RetryItem[]> => {
+    if (retryHistoryReady.current) return Promise.resolve(retryItemsRef.current)
+    if (retryHistoryHydration.current) return retryHistoryHydration.current
+
+    setRetryHistoryLoading(true)
+    const requestVersion = ++retryHistoryRequestVersion.current
+    const work = (async () => {
+      try {
+        // Reading the raw localStorage string is cheap. The expensive JSON,
+        // chess-position and legal-move validation happens only in the
+        // dedicated Worker below, after Train has explicitly requested it.
+        let raw = readBrowserRetryItemsRaw()
+        let items: RetryItem[] | null = null
+        // Another tab or a just-saved Review exercise can rewrite the mirror
+        // while its previous snapshot is being checked. A bounded retry keeps
+        // the UI from ever adopting text that we know is stale, without
+        // letting a pathological external writer hold Train indefinitely.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const candidate = await getRetryHydrationClient().hydrate(raw)
+          const latestRaw = readBrowserRetryItemsRaw()
+          if (latestRaw === raw) {
+            items = candidate
+            break
+          }
+          raw = latestRaw
+        }
+        if (items === null) {
+          // Preserve any in-memory Review item and leave this history marked
+          // unhydrated so a future Train intent can safely try again.
+          return retryItemsRef.current
+        }
+        retryHistoryReady.current = true
+        setRetryItems((current) => mergeRetryItems(items, current))
+        return items
+      } catch {
+        // A malformed mirror is already represented by an empty successful
+        // result. This path is only an unexpected Worker/client failure; keep
+        // the queue usable and allow a later Train intent to try again.
+        return []
+      } finally {
+        if (requestVersion === retryHistoryRequestVersion.current) {
+          retryHistoryHydration.current = null
+          setRetryHistoryLoading(false)
+        }
+      }
+    })()
+    retryHistoryHydration.current = work
+    return work
+  }, [getRetryHydrationClient])
 
   const releaseIdleBrowserRuntimeForReview = useCallback(() => {
     botClient.current?.releaseIdleBrowserRuntime()
@@ -913,8 +978,11 @@ export default function App() {
 
   const openRetryQueue = useCallback((retryKey: string) => {
     setRequestedRetryKey(retryKey)
+    // A Review → Train handoff should never flash an empty personal queue
+    // while the previously saved browser mirror is still being validated.
+    void hydrateTrainingRetryHistory()
     navigateTo('train')
-  }, [navigateTo])
+  }, [hydrateTrainingRetryHistory, navigateTo])
 
   const returnToReview = useCallback((item: RetryItem) => {
     setRequestedRetryKey(null)
@@ -1587,7 +1655,10 @@ export default function App() {
           nativeRetries = await database.listRetryItems()
           nativeTactics = await database.listTacticsState()
         }
-        const browserRetries = loadBrowserRetryItems()
+        // The browser mirror can be a full 500-position queue. It is parsed
+        // by the same local Worker used by the Train surface, never during
+        // Play's initial render or as synchronous desktop bootstrap work.
+        const browserRetries = await hydrateTrainingRetryHistory()
         const retriesByKey = new Map(nativeRetries.map((item) => [item.retryKey, item]))
         for (const item of mergeRetryItems(browserRetries, retryItemsRef.current)) {
           const native = retriesByKey.get(item.retryKey)
@@ -1642,7 +1713,22 @@ export default function App() {
       }
     })()
     return () => { cancelled = true }
-  }, [database, reportDatabaseError, setGame])
+  }, [database, hydrateTrainingRetryHistory, reportDatabaseError, setGame])
+
+  useEffect(() => {
+    if (tab !== 'train') return
+    void hydrateTrainingRetryHistory()
+  }, [hydrateTrainingRetryHistory, tab])
+
+  useEffect(() => () => {
+    // StrictMode deliberately mounts, cleans up and mounts again in
+    // development. Fence the cancelled first request so its eventual catch /
+    // finally cannot clear the real second Train hydration state.
+    retryHistoryRequestVersion.current += 1
+    retryHistoryHydration.current = null
+    retryHydrationClient.current?.dispose()
+    retryHydrationClient.current = null
+  }, [])
 
   useEffect(() => {
     if (tab !== 'library' && tab !== 'insights') return
@@ -1727,6 +1813,20 @@ export default function App() {
       botClient.current = null
     }
   }, [])
+
+  useEffect(() => {
+    if (!shouldReleaseIdlePlayBrowserRuntime({
+      outsidePlay: tab !== 'play',
+      gameFinished,
+      premoveWindow,
+      thinking,
+      engineProbeActive,
+    })) return
+    // Browser Stockfish is intentionally warm only while a player is still
+    // actively in a live game. Once Play is safely settled, free its Worker
+    // and bounded hash instead of carrying that memory into other workspaces.
+    botClient.current?.releaseIdleBrowserRuntime()
+  }, [engineProbeActive, gameFinished, premoveWindow, tab, thinking])
 
   useEffect(() => {
     // Changing a configured executable invalidates the prior check, but does
@@ -2254,6 +2354,7 @@ export default function App() {
                 tacticProgress={tacticProgress}
                 onRecordTacticAttempt={recordTacticAttempt}
                 retryItems={retryItems}
+                retryHistoryLoading={retryHistoryLoading}
                 requestedRetryKey={requestedRetryKey}
                 onSaveRetryItem={saveRetryItem}
                 onDeleteRetryItem={deleteRetryItem}

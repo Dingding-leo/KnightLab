@@ -209,14 +209,17 @@ export class HybridEngineClient {
   }
 
   /**
-   * Review analysis is only allowed once Play is idle. Release Play's retained
-   * WebAssembly runtime so an uncached candidate line or full review never
-   * keeps a second Stockfish Worker and hash allocation alive.
+   * Release Play's retained browser workers once their caller has confirmed
+   * they are idle. This frees both the Stockfish hash and a fallback Worker so
+   * Review, Train and the rest of the shell do not inherit a past game's
+   * allocation. Native Stockfish remains owned by its desktop pool.
    */
   releaseIdleBrowserRuntime(): void {
     if (this.disposed || this.desktop) return
     this.browserStockfish?.dispose()
     this.browserStockfish = null
+    this.fallback?.dispose()
+    this.fallback = null
   }
 
   dispose(): void {

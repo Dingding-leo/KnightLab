@@ -27,4 +27,25 @@ describe('training workspace', () => {
     expect(markup).not.toContain('Your review queue is clear')
     expect(markup).not.toContain('Click ')
   })
+
+  it('keeps the personal queue honest while its saved positions are preparing locally', () => {
+    const markup = renderToStaticMarkup(
+      <TrainingWorkspace
+        tacticProgress={createTacticProgress()}
+        onRecordTacticAttempt={vi.fn().mockResolvedValue(undefined)}
+        retryItems={[]}
+        retryHistoryLoading
+        requestedRetryKey="retry-1234567890123456-1"
+        onSaveRetryItem={vi.fn().mockResolvedValue(undefined)}
+        onDeleteRetryItem={vi.fn().mockResolvedValue(undefined)}
+        onBackToReview={vi.fn()}
+        onOpenReview={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('Preparing your saved practice locally…')
+    expect(markup).toContain('aria-busy="true"')
+    expect(markup).toContain('Personal positions preparing')
+    expect(markup).not.toContain('Your review queue is clear')
+  })
 })

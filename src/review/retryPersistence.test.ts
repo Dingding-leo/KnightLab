@@ -9,6 +9,8 @@ import {
   deleteBrowserRetryItem,
   loadBrowserRetryItem,
   loadBrowserRetryItems,
+  parseBrowserRetryItemsRaw,
+  readBrowserRetryItemsRaw,
   saveBrowserRetryItem,
 } from './retryPersistence'
 import { saveRetryItemsSerially } from './retryQueuePersistence'
@@ -85,6 +87,24 @@ describe('browser retry queue persistence', () => {
 
     expect(loadBrowserRetryItems(storage)).toEqual([valid])
     expect(loadBrowserRetryItem('not-a-retry-key', storage)).toBeNull()
+  })
+
+  it('separates a safe raw browser read from the shared fail-closed parser', () => {
+    const storage = new MemoryStorage()
+    const valid = retry()
+    const malformed = { ...valid, solutionSan: 'not-the-solution' }
+    storage.setItem('knightclub.retry-items.v1', JSON.stringify([valid, malformed]))
+
+    const raw = readBrowserRetryItemsRaw(storage)
+    expect(raw).toBe(storage.getItem('knightclub.retry-items.v1'))
+    expect(parseBrowserRetryItemsRaw(raw)).toEqual([valid])
+
+    const unreadable = {
+      getItem: () => { throw new Error('Storage is blocked.') },
+      setItem: () => {},
+      removeItem: () => {},
+    }
+    expect(readBrowserRetryItemsRaw(unreadable)).toBeNull()
   })
 
   it('invalidates an old snapshot after a direct storage rewrite and never exposes its private records', () => {

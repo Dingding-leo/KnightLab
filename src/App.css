@@ -1380,6 +1380,11 @@ input:focus { border-color: rgba(163, 214, 92, .65); box-shadow: 0 0 0 3px rgba(
 .analysis-notice { margin: 7px 1px 0; color: var(--accent); font-size: 10px; line-height: 1.45; }
 .analysis-error { margin: 2px 0 0; color: var(--danger); font-size: 10px; line-height: 1.45; }
 
+.train-history-loading { min-height: 170px; padding: 20px; border: 1px solid rgba(89, 195, 245, .24); border-radius: 14px; background: rgba(89, 195, 245, .055); color: #b6def6; display: flex; align-items: center; justify-content: center; gap: 12px; text-align: left; }
+.train-history-loading > div { display: grid; gap: 4px; }
+.train-history-loading strong { color: var(--text); font-size: 13px; }
+.train-history-loading span { color: var(--muted); font-size: 10px; line-height: 1.45; }
+
 .analysis-panel {
   height: min(760px, calc(100dvh - 170px));
   min-height: 610px;

@@ -8,8 +8,8 @@ import {
   type RetryItem,
 } from './retry'
 
-const RETRY_STORAGE_KEY = 'knightclub.retry-items.v1'
-const MAX_BROWSER_RETRY_STORAGE_BYTES = MAX_RETRY_ITEMS * (MAX_RETRY_BYTES + 2) + 2
+export const RETRY_STORAGE_KEY = 'knightclub.retry-items.v1'
+export const MAX_BROWSER_RETRY_STORAGE_BYTES = MAX_RETRY_ITEMS * (MAX_RETRY_BYTES + 2) + 2
 
 export interface RetryStorage {
   getItem(key: string): string | null
@@ -72,7 +72,27 @@ function cloneRetryItem(item: RetryItem): RetryItem {
   }
 }
 
-function parseBrowserRetryItems(raw: string | null): RetryItem[] {
+/**
+ * Reads the browser mirror without parsing it. Deferred Train hydration can
+ * hand this bounded-by-parser snapshot to a Worker, while synchronous callers
+ * retain the same fail-closed loader below.
+ */
+export function readBrowserRetryItemsRaw(storage?: RetryStorage): string | null {
+  const target = browserStorage(storage)
+  if (!target) return null
+  try {
+    return target.getItem(RETRY_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Validates a raw browser mirror without reading storage. This is deliberately
+ * pure so the hydration Worker and the synchronous browser loader share the
+ * exact same fail-closed, byte-bounded semantics.
+ */
+export function parseBrowserRetryItemsRaw(raw: string | null): RetryItem[] {
   try {
     if (raw === null || byteLength(raw) > MAX_BROWSER_RETRY_STORAGE_BYTES) return []
     const parsed: unknown = JSON.parse(raw)
@@ -104,17 +124,11 @@ function cacheRetryItems(
 }
 
 function readBrowserRetrySnapshot(storage: RetryStorage): CachedRetryItems {
-  let raw: string | null = null
-  try {
-    raw = storage.getItem(RETRY_STORAGE_KEY)
-  } catch {
-    // Keep the existing fail-closed behavior: an unreadable browser mirror is
-    // treated as empty, while a later successful write can repair it.
-  }
+  const raw = readBrowserRetryItemsRaw(storage)
 
   const cached = browserRetryCache.get(storage)
   if (cached && cached.raw === raw) return cached
-  return cacheRetryItems(storage, raw, parseBrowserRetryItems(raw))
+  return cacheRetryItems(storage, raw, parseBrowserRetryItemsRaw(raw))
 }
 
 function insertRetryItem(items: readonly RetryItem[], item: RetryItem): RetryItem[] {

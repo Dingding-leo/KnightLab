@@ -43,18 +43,23 @@ describe('Hybrid engine startup', () => {
     client.dispose()
   })
 
-  it('releases an idle browser Stockfish runtime before Review can allocate its own Worker', () => {
+  it('releases idle browser engine workers before another workspace can allocate its own Worker', () => {
     const client = new HybridEngineClient()
-    const dispose = vi.fn()
+    const disposeStockfish = vi.fn()
+    const disposeFallback = vi.fn()
     const internal = client as unknown as {
       browserStockfish: { dispose: () => void } | null
+      fallback: { dispose: () => void } | null
     }
-    internal.browserStockfish = { dispose }
+    internal.browserStockfish = { dispose: disposeStockfish }
+    internal.fallback = { dispose: disposeFallback }
 
     client.releaseIdleBrowserRuntime()
 
-    expect(dispose).toHaveBeenCalledOnce()
+    expect(disposeStockfish).toHaveBeenCalledOnce()
+    expect(disposeFallback).toHaveBeenCalledOnce()
     expect(internal.browserStockfish).toBeNull()
+    expect(internal.fallback).toBeNull()
     client.dispose()
   })
 })
