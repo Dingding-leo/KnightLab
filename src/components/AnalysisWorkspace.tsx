@@ -115,6 +115,7 @@ import {
   createPersistedReview,
   createReviewKey,
   MAX_REVIEW_PLIES,
+  type HydratedPersistedReview,
   type PersistedReview,
 } from '../review/reviewPersistence'
 import { ChessBoard } from './ChessBoard'
@@ -132,7 +133,8 @@ interface AnalysisWorkspaceProps {
   threads: number
   hashMb: number
   reviewStore?: {
-    load: (reviewKey: string) => Promise<PersistedReview | null>
+    load: (reviewKey: string) => Promise<HydratedPersistedReview | null>
+    cancelLoad?: (message?: string) => void
     save: (review: PersistedReview) => Promise<void>
   }
   onReviewSaved?: (review: PersistedReview) => void
@@ -697,6 +699,7 @@ export function AnalysisWorkspace({
   const reviewCheckpointRef = useRef<ReviewCheckpoint | null>(null)
   const reviewAbort = useRef<AbortController | null>(null)
   const reviewLoadVersion = useRef(0)
+  const pendingRestoredReview = useRef<HydratedPersistedReview | null>(null)
   const reviewRunVersion = useRef(0)
   const handledPlayPreviewTarget = useRef<PlayPreviewReviewTarget | null>(null)
   const mounted = useRef(true)
@@ -1105,6 +1108,7 @@ export function AnalysisWorkspace({
       retryTimelineVerifier.current?.dispose()
       retryTimelineVerifier.current = null
       reviewAbort.current = null
+      pendingRestoredReview.current = null
     }
   }, [])
 
@@ -1195,6 +1199,17 @@ export function AnalysisWorkspace({
     setReview(null)
     setReviewOrigin(null)
     setReviewError('')
+    const restored = pendingRestoredReview.current
+    if (restored?.record.reviewKey === reviewKey
+      && restored.timeline.startFen === timeline.startFen
+      && restored.timeline.moves.length === timeline.moves.length) {
+      pendingRestoredReview.current = null
+      setReview(restored.record.report)
+      setReviewOrigin('restored')
+      setReviewHydrating(false)
+      return
+    }
+    pendingRestoredReview.current = null
     if (!reviewStore || !reviewKey) {
       setReviewHydrating(false)
       return
@@ -1202,8 +1217,9 @@ export function AnalysisWorkspace({
 
     setReviewHydrating(true)
     void reviewStore.load(reviewKey)
-      .then((record) => {
-        if (version !== reviewLoadVersion.current || !record) return
+      .then((hydration) => {
+        if (version !== reviewLoadVersion.current || !hydration) return
+        const { record } = hydration
         if (record.startFen !== timeline.startFen || record.moveCount !== timeline.moves.length) return
         setReview(record.report)
         setReviewOrigin('restored')
@@ -1217,7 +1233,9 @@ export function AnalysisWorkspace({
       })
 
     return () => {
-      if (version === reviewLoadVersion.current) reviewLoadVersion.current += 1
+      if (version !== reviewLoadVersion.current) return
+      reviewLoadVersion.current += 1
+      reviewStore.cancelLoad?.('Saved review restoration was superseded.')
     }
   }, [clearReviewCheckpoint, reviewKey, reviewStore, timeline.moves.length, timeline.startFen])
 
@@ -1239,7 +1257,6 @@ export function AnalysisWorkspace({
   useEffect(() => {
     if (!requestedReviewTarget) return
     let cancelled = false
-    let activeParser: TimelineWorkerClient | null = null
     const parseGate = timelineParseGate.current
     const target = requestedReviewTarget
     const targetVersion = ++reviewRunVersion.current
@@ -1253,32 +1270,37 @@ export function AnalysisWorkspace({
     timelineParser.current?.cancel()
     // This queued navigation is a new user intent. Invalidate both a running
     // review and any earlier saved-review lookup before awaiting its source.
-    reviewLoadVersion.current += 1
+    const savedReviewLoadVersion = ++reviewLoadVersion.current
     clearVariationInteraction()
     setReviewRunning(false)
     setReviewSaving(false)
     setReviewProgress(null)
     setReviewError('')
     setTimelineLoading(true)
+    setReviewHydrating(true)
+    pendingRestoredReview.current = null
+    let restoredSource = false
 
     void (async () => {
       try {
         if (!reviewStore) throw new Error('The source review is not available in this session.')
-        const record = await reviewStore.load(target.reviewKey)
+        const hydration = await reviewStore.load(target.reviewKey)
         if (cancelled || !isReviewRunCurrent(targetVersion)) return
-        if (!record) throw new Error('The saved source review is no longer available on this device.')
-        activeParser = getTimelineParser()
-        const restored = await activeParser.parsePgn(record.sourcePgn)
+        if (!hydration) throw new Error('The saved source review is no longer available on this device.')
+        const { record, timeline: restored } = hydration
         if (cancelled || !isReviewRunCurrent(targetVersion) || !parseGate.isCurrent(parseRequestId)) return
-        if (createReviewKey(restored) !== target.reviewKey
-          || target.sourcePly < 1
+        if (target.sourcePly < 1
           || target.sourcePly > restored.moves.length) {
           throw new Error('The saved source review does not match this practice position.')
         }
         if (cancelled || !isReviewRunCurrent(targetVersion)) return
 
-        // Restore through the same immutable PGN path as a normal review, then
-        // let the ordinary hydration effect restore the saved report.
+        // The saved-review Worker already strictly replayed this exact PGN,
+        // so Train can adopt its canonical timeline without a second parser.
+        // Give ordinary hydration this same verified record so it does not
+        // validate and replay the source a second time.
+        pendingRestoredReview.current = hydration
+        restoredSource = true
         setTimeline(restored)
         setPgnInput(record.sourcePgn)
         setPly(target.sourcePly)
@@ -1303,6 +1325,7 @@ export function AnalysisWorkspace({
       } finally {
         if (!cancelled && isReviewRunCurrent(targetVersion) && parseGate.isCurrent(parseRequestId)) {
           setTimelineLoading(false)
+          if (!restoredSource) setReviewHydrating(false)
           onRequestedReviewTargetHandled?.()
         }
       }
@@ -1310,10 +1333,14 @@ export function AnalysisWorkspace({
 
     return () => {
       cancelled = true
+      if (savedReviewLoadVersion === reviewLoadVersion.current) pendingRestoredReview.current = null
       if (parseGate.isCurrent(parseRequestId)) parseGate.invalidate()
-      activeParser?.cancel()
+      if (savedReviewLoadVersion === reviewLoadVersion.current) {
+        reviewLoadVersion.current += 1
+        reviewStore?.cancelLoad?.('Saved review source opening was superseded.')
+      }
     }
-  }, [cancelRetryTimelinePreparation, clearReviewCheckpoint, clearVariationInteraction, getTimelineParser, onRequestedReviewTargetHandled, requestedReviewTarget, reviewStore])
+  }, [cancelRetryTimelinePreparation, clearReviewCheckpoint, clearVariationInteraction, onRequestedReviewTargetHandled, requestedReviewTarget, reviewStore])
 
   const stopFullReview = useCallback(() => {
     reviewRunVersion.current += 1

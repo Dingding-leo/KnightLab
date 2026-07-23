@@ -44,6 +44,7 @@
 - [x] 1,024-ply full-review resource cap with long-PGN numeric position jump
 - [x] Latest-wins Worker timeline preparation for long initial, pasted and file PGNs
 - [x] Local persistence for completed full-game reports, saved-report restoration and Library review linkage
+- [x] Latest-wins, Worker-only strict saved-report hydration with raw browser/SQLite inputs, stale-work cancellation and a canonical Train → Review timeline handoff
 - [x] Session-only progressive Review checkpoints with provisional feedback, explicit Stop/Resume/Discard controls, frozen bounded settings and engine-identity continuity
 - [ ] Durable cross-restart analysis jobs with executable fingerprints, persistent position caching and deterministic retry state
 - [x] Nonlinear accuracy and expected-score model with documented formulae

@@ -139,6 +139,24 @@ describe('DatabaseClient', () => {
     }
   })
 
+  it('leaves a desktop review payload unparsed for the saved-review Worker', async () => {
+    const payload = JSON.parse(JSON.stringify(review)) as typeof review
+    const invoke = vi.fn(async (command: string) => command === 'database_load_review' ? payload : null)
+    const client = new DatabaseClient(invoke)
+    const move = vi.spyOn(Chess.prototype, 'move')
+    const loadPgn = vi.spyOn(Chess.prototype, 'loadPgn')
+    try {
+      await expect(client.loadReviewForHydration(review.reviewKey)).resolves.toEqual(payload)
+      expect(invoke).toHaveBeenCalledWith('database_load_review', { reviewKey: review.reviewKey })
+      expect(loadPgn).not.toHaveBeenCalled()
+      expect(move).not.toHaveBeenCalled()
+      await expect(client.loadReviewForHydration('not-a-review-key')).rejects.toThrow('Review key is invalid.')
+    } finally {
+      loadPgn.mockRestore()
+      move.mockRestore()
+    }
+  })
+
   it('uses task-specific commands and camelCase payloads', async () => {
     const summaries = snapshot.games.map(toStoredGameSummary)
     const invoke = vi.fn(async (command: string) => {

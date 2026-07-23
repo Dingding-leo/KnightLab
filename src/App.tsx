@@ -171,10 +171,11 @@ import {
 import { LibraryHydrationClient } from './storage/libraryHydrationClient'
 import {
   createReviewKeyFromMoves,
-  loadBrowserReview,
+  readBrowserReviewRaw,
   saveBrowserReview,
   type PersistedReview,
 } from './review/reviewPersistence'
+import { ReviewHydrationClient } from './review/reviewHydrationClient'
 import {
   deleteBrowserRetryItem,
   loadBrowserRetryItem,
@@ -692,6 +693,7 @@ export default function App() {
   const tacticsHistoryHydration = useRef<Promise<TacticsState> | null>(null)
   const tacticsHistoryRequestVersion = useRef(0)
   const tacticsHydrationClient = useRef<TacticsHydrationClient | null>(null)
+  const reviewHydrationClient = useRef<ReviewHydrationClient | null>(null)
   const tacticsStateRef = useRef(tacticsState)
   const tacticsWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const activeSessionPersistence = useRef<ActiveSessionPersistence | null>(null)
@@ -758,6 +760,26 @@ export default function App() {
     tacticsHydrationClient.current ??= new TacticsHydrationClient()
     return tacticsHydrationClient.current
   }, [])
+
+  const getReviewHydrationClient = useCallback(() => {
+    reviewHydrationClient.current ??= new ReviewHydrationClient()
+    return reviewHydrationClient.current
+  }, [])
+
+  const hydrateBrowserSavedReview = useCallback(async (reviewKey: string) => {
+    // Keep the interaction thread to a raw localStorage read. The Worker
+    // parses the mirror, validates the selected report and replays its PGN.
+    let raw = readBrowserReviewRaw()
+    if (raw === null) return null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const candidate = await getReviewHydrationClient().hydrateBrowser(raw, reviewKey)
+      const latestRaw = readBrowserReviewRaw()
+      if (latestRaw === raw) return candidate
+      raw = latestRaw
+      if (raw === null) return null
+    }
+    throw new Error('Saved reviews changed while KnightClub was opening them.')
+  }, [getReviewHydrationClient])
 
   const hydrateTrainingRetryHistory = useCallback((): Promise<RetryItem[]> => {
     if (retryHistoryReady.current) return Promise.resolve(retryItemsRef.current)
@@ -1379,9 +1401,14 @@ export default function App() {
 
   const reviewStore = useMemo(() => ({
     load: async (reviewKey: string) => {
-      if (desktop && database && databaseReady) return database.loadReview(reviewKey)
-      return loadBrowserReview(reviewKey)
+      if (desktop && database && databaseReady) {
+        const raw = await database.loadReviewForHydration(reviewKey)
+        if (raw === null) return null
+        return getReviewHydrationClient().hydrateNative(raw, reviewKey)
+      }
+      return hydrateBrowserSavedReview(reviewKey)
     },
+    cancelLoad: (message?: string) => reviewHydrationClient.current?.cancel(message),
     save: async (review: PersistedReview) => {
       if (desktop && database && databaseReady) {
         await database.saveReview(review)
@@ -1389,7 +1416,7 @@ export default function App() {
       }
       saveBrowserReview(review)
     },
-  }), [database, databaseReady, desktop])
+  }), [database, databaseReady, desktop, getReviewHydrationClient, hydrateBrowserSavedReview])
 
   const retryStore = useMemo(() => ({
     load: async (retryKey: string) => {
@@ -2644,6 +2671,8 @@ export default function App() {
     tacticsHistoryHydration.current = null
     tacticsHydrationClient.current?.dispose()
     tacticsHydrationClient.current = null
+    reviewHydrationClient.current?.dispose()
+    reviewHydrationClient.current = null
   }, [])
 
   useEffect(() => {

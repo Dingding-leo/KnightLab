@@ -44,6 +44,17 @@ export interface PersistedReview {
   report: GameReview
 }
 
+/**
+ * A strict saved-review validation also produces the exact timeline it had to
+ * replay. Keeping the two together lets a background Worker hand Train →
+ * Review one verified source instead of asking a second Worker to parse the
+ * same PGN again.
+ */
+export interface HydratedPersistedReview {
+  record: PersistedReview
+  timeline: AnalysisTimeline
+}
+
 export interface ReviewStorage {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
@@ -53,8 +64,8 @@ export interface ReviewStorage {
 /**
  * A deliberately cheap shape for indexing browser storage.  It proves that a
  * value can safely participate in replacement/sorting, but it does not replay
- * its PGN or walk every reviewed move.  Only `loadBrowserReview` promotes an
- * envelope to a real PersistedReview with `assertPersistedReview`.
+ * its PGN or walk every reviewed move. Only a strict browser loader promotes
+ * an envelope to a real PersistedReview with `assertPersistedReview`.
  */
 interface PersistedReviewEnvelope {
   schemaVersion: typeof REVIEW_SCHEMA_VERSION
@@ -96,6 +107,10 @@ function isBoundedString(value: unknown, minimum: number, maximum: number): valu
     && value.length >= minimum
     && value.length <= maximum
     && !value.includes('\0')
+}
+
+export function isReviewKey(value: unknown): value is string {
+  return typeof value === 'string' && REVIEW_KEY_PATTERN.test(value)
 }
 
 function isBoundedInteger(value: unknown, minimum: number, maximum: number): value is number {
@@ -204,8 +219,7 @@ function isGameReviewEnvelope(value: unknown, moveCount: number): boolean {
 function isPersistedReviewEnvelope(value: unknown): value is PersistedReviewEnvelope {
   if (!isObject(value)
     || value.schemaVersion !== REVIEW_SCHEMA_VERSION
-    || !isBoundedString(value.reviewKey, 16, 16)
-    || !REVIEW_KEY_PATTERN.test(value.reviewKey)
+    || !isReviewKey(value.reviewKey)
     || !isBoundedString(value.sourcePgn, 1, MAX_PGN_BYTES)
     || !isBoundedString(value.startFen, 1, MAX_FEN_BYTES)
     || !isBoundedInteger(value.moveCount, 1, MAX_REVIEW_PLIES)
@@ -275,11 +289,15 @@ export function isPersistedReview(value: unknown): value is PersistedReview {
   }
 }
 
-export function assertPersistedReview(value: unknown): asserts value is PersistedReview {
+/**
+ * Fully validate an untrusted persisted report and retain the canonical PGN
+ * timeline created during that proof. This must run outside an interaction
+ * render path for restored long games.
+ */
+export function hydratePersistedReview(value: unknown): HydratedPersistedReview {
   if (!isObject(value)
     || value.schemaVersion !== REVIEW_SCHEMA_VERSION
-    || !isBoundedString(value.reviewKey, 16, 16)
-    || !REVIEW_KEY_PATTERN.test(value.reviewKey)
+    || !isReviewKey(value.reviewKey)
     || !isBoundedString(value.sourcePgn, 1, MAX_PGN_BYTES)
     || !isBoundedString(value.startFen, 1, MAX_FEN_BYTES)
     || !Number.isInteger(value.moveCount)
@@ -291,13 +309,19 @@ export function assertPersistedReview(value: unknown): asserts value is Persiste
     throw new Error('Saved review is invalid or too large.')
   }
 
-  const timeline = createPgnTimeline(value.sourcePgn)
-  if (timeline.startFen !== value.startFen
-    || timeline.moves.length !== value.moveCount
-    || createReviewKey(timeline) !== value.reviewKey
-    || !matchesSourceTimeline(value.report.moves, timeline)) {
+  const record = value as unknown as PersistedReview
+  const timeline = createPgnTimeline(record.sourcePgn)
+  if (timeline.startFen !== record.startFen
+    || timeline.moves.length !== record.moveCount
+    || createReviewKey(timeline) !== record.reviewKey
+    || !matchesSourceTimeline(record.report.moves, timeline)) {
     throw new Error('Saved review does not match its source game.')
   }
+  return { record, timeline }
+}
+
+export function assertPersistedReview(value: unknown): asserts value is PersistedReview {
+  void hydratePersistedReview(value)
 }
 
 /**
@@ -314,6 +338,23 @@ export function assertPersistedReviewForSave(value: unknown): asserts value is P
 function browserStorage(storage?: ReviewStorage): ReviewStorage | null {
   if (storage) return storage
   return typeof localStorage === 'undefined' ? null : localStorage
+}
+
+/**
+ * Returns the opaque browser mirror without parsing it. Review restoration
+ * hands this text to a dedicated Worker so JSON parsing and PGN replay never
+ * monopolise the Review interaction thread.
+ */
+export function readBrowserReviewRaw(storage?: ReviewStorage): string | null {
+  const target = browserStorage(storage)
+  if (!target) return null
+  try {
+    return target.getItem(REVIEW_STORAGE_KEY)
+  } catch {
+    // Preserve the old fail-closed browser behavior: inaccessible local
+    // storage behaves as an empty review mirror.
+    return null
+  }
 }
 
 function comparePersistedReviews(left: PersistedReviewEnvelope, right: PersistedReviewEnvelope): number {
@@ -366,13 +407,7 @@ function cacheBrowserReviewEnvelopes(
 }
 
 function readBrowserReviewSnapshot(storage: ReviewStorage): CachedBrowserReviews {
-  let raw: string | null = null
-  try {
-    raw = storage.getItem(REVIEW_STORAGE_KEY)
-  } catch {
-    // Match the previous fail-closed behaviour: an unreadable mirror behaves
-    // as empty, while a subsequent successful save can replace it.
-  }
+  const raw = readBrowserReviewRaw(storage)
 
   const cached = browserReviewCache.get(storage)
   if (cached && cached.raw === raw) return cached
@@ -414,6 +449,28 @@ function findValidatedBrowserReview(
   return null
 }
 
+/**
+ * Worker-safe strict browser restore. It reuses the exact shallow envelope
+ * rules and newest-first duplicate fallback of `loadBrowserReview`, but keeps
+ * JSON parsing and each target PGN replay off the UI thread.
+ */
+export function hydrateBrowserReviewRaw(
+  raw: string | null,
+  reviewKey: string,
+): HydratedPersistedReview | null {
+  if (!isReviewKey(reviewKey)) return null
+  const candidates = parseBrowserReviewEnvelopes(raw)
+  for (const candidate of candidates) {
+    if (candidate.reviewKey !== reviewKey) continue
+    try {
+      return hydratePersistedReview(candidate)
+    } catch {
+      // A malformed newer duplicate must not shadow an older valid record.
+    }
+  }
+  return null
+}
+
 export function saveBrowserReview(record: PersistedReview, storage?: ReviewStorage): void {
   assertPersistedReviewForSave(record)
   const target = browserStorage(storage)
@@ -425,7 +482,7 @@ export function saveBrowserReview(record: PersistedReview, storage?: ReviewStora
 }
 
 export function loadBrowserReview(reviewKey: string, storage?: ReviewStorage): PersistedReview | null {
-  if (!REVIEW_KEY_PATTERN.test(reviewKey)) return null
+  if (!isReviewKey(reviewKey)) return null
   const target = browserStorage(storage)
   if (!target) return null
   const review = findValidatedBrowserReview(readBrowserReviewSnapshot(target), reviewKey)

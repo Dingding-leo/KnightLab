@@ -10,7 +10,12 @@ import {
   type StoredGame,
   type StoredGameSummary,
 } from './gameStore'
-import { assertPersistedReview, assertPersistedReviewForSave, type PersistedReview } from '../review/reviewPersistence'
+import {
+  assertPersistedReview,
+  assertPersistedReviewForSave,
+  isReviewKey,
+  type PersistedReview,
+} from '../review/reviewPersistence'
 import {
   MAX_RETRY_ITEMS,
   assertRetryItem,
@@ -283,9 +288,18 @@ export class DatabaseClient {
     await this.enqueue(() => this.invoke('database_save_review', { review }).then(() => undefined))
   }
 
+  /**
+   * The desktop UI must pass this untrusted payload through the dedicated
+   * saved-review Worker before it can be rendered. Keep the original strict
+   * `loadReview` below for direct callers and compatibility tests.
+   */
+  async loadReviewForHydration(reviewKey: string): Promise<unknown | null> {
+    if (!isReviewKey(reviewKey)) throw new Error('Review key is invalid.')
+    return this.invoke('database_load_review', { reviewKey })
+  }
+
   async loadReview(reviewKey: string): Promise<PersistedReview | null> {
-    if (!/^[0-9a-f]{16}$/.test(reviewKey)) throw new Error('Review key is invalid.')
-    const value = await this.invoke('database_load_review', { reviewKey })
+    const value = await this.loadReviewForHydration(reviewKey)
     if (value === null) return null
     assertPersistedReview(value)
     if (value.reviewKey !== reviewKey) throw new Error('KnightClub received a mismatched saved review.')
