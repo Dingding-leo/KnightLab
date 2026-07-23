@@ -1,5 +1,6 @@
 import type { AnalysisFileImportInput, AnalysisFileImportResult } from './fileImport'
 import type { AnalysisTimeline } from './analysisModel'
+import type { RetryTimelineInput, RetryTimelineVerification } from '../review/retry'
 
 export interface TimelineWorkerPgnRequest {
   type: 'parse-pgn'
@@ -13,7 +14,13 @@ export interface TimelineWorkerFileRequest {
   input: AnalysisFileImportInput
 }
 
-export type TimelineWorkerRequest = TimelineWorkerPgnRequest | TimelineWorkerFileRequest
+export interface TimelineWorkerRetryTimelineRequest {
+  type: 'verify-retry-timeline'
+  id: number
+  timeline: RetryTimelineInput
+}
+
+export type TimelineWorkerRequest = TimelineWorkerPgnRequest | TimelineWorkerFileRequest | TimelineWorkerRetryTimelineRequest
 
 export interface TimelineWorkerTimelineResult {
   type: 'timeline-result'
@@ -27,10 +34,16 @@ export interface TimelineWorkerFileResult {
   result: AnalysisFileImportResult
 }
 
+export interface TimelineWorkerRetryTimelineResult {
+  type: 'retry-timeline-result'
+  id: number
+  verification: RetryTimelineVerification | null
+}
+
 export interface TimelineWorkerError {
   type: 'error'
   id: number
   message: string
 }
 
-export type TimelineWorkerResponse = TimelineWorkerTimelineResult | TimelineWorkerFileResult | TimelineWorkerError
+export type TimelineWorkerResponse = TimelineWorkerTimelineResult | TimelineWorkerFileResult | TimelineWorkerRetryTimelineResult | TimelineWorkerError

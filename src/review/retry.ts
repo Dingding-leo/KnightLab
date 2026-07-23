@@ -67,6 +67,8 @@ export interface CreateRetryItemInput {
 
 type UciMove = RetryMoveInput
 
+export type RetryTimelineInput = Pick<AnalysisTimeline, 'startFen' | 'positions' | 'moves'>
+
 interface VerifiedTimelineMove {
   ply: number
   preFen: string
@@ -87,6 +89,18 @@ interface VerifiedTimelineMove {
  */
 export interface VerifiedRetryTimeline {
   readonly moves: readonly Readonly<VerifiedTimelineMove>[]
+}
+
+/**
+ * Plain data returned by the dedicated timeline Worker after its full
+ * chess.js replay. It is intentionally not a `VerifiedRetryTimeline`: Worker
+ * structured cloning cannot preserve this module's private identity registry.
+ */
+export interface RetryTimelineVerification {
+  schemaVersion: 1
+  startFen: string
+  finalFen: string
+  moves: readonly VerifiedTimelineMove[]
 }
 
 export interface CreateRetryItemFromVerifiedTimelineInput extends Omit<CreateRetryItemInput, 'timeline'> {
@@ -232,7 +246,7 @@ function matchesTimelinePosition(
 }
 
 function verifyTimeline(
-  timeline: Pick<AnalysisTimeline, 'startFen' | 'positions' | 'moves'>,
+  timeline: RetryTimelineInput,
 ): readonly VerifiedTimelineMove[] | null {
   if (!timeline
     || !isBoundedString(timeline.startFen, 1, MAX_FEN_BYTES)
@@ -302,11 +316,125 @@ function verifiedMoveForReview(
 }
 
 function verifyTimelineMove(
-  timeline: Pick<AnalysisTimeline, 'startFen' | 'positions' | 'moves'>,
+  timeline: RetryTimelineInput,
   reviewed: ReviewedMove,
 ): VerifiedTimelineMove | null {
   const moves = verifyTimeline(timeline)
   return moves ? verifiedMoveForReview(moves, reviewed) : null
+}
+
+function registerVerifiedRetryTimeline(
+  moves: readonly VerifiedTimelineMove[],
+): VerifiedRetryTimeline {
+  const snapshot: VerifiedRetryTimeline = Object.freeze({
+    moves: Object.freeze(moves.map((move) => Object.freeze({ ...move }))),
+  })
+  verifiedRetryTimelines.add(snapshot)
+  return snapshot
+}
+
+/**
+ * Runs the complete fail-closed timeline replay and returns only serializable
+ * facts. The Review Worker uses this so a long game never blocks React while
+ * its practice positions are being checked.
+ */
+export function verifyRetryTimelineForWorker(
+  timeline: RetryTimelineInput,
+): RetryTimelineVerification | null {
+  const moves = verifyTimeline(timeline)
+  const finalPosition = timeline?.positions?.[moves?.length ?? -1]
+  if (!moves || !finalPosition || !isBoundedString(finalPosition.fen, 1, MAX_FEN_BYTES)) return null
+
+  return {
+    schemaVersion: 1,
+    startFen: timeline.startFen,
+    finalFen: finalPosition.fen,
+    moves: moves.map((move) => ({ ...move })),
+  }
+}
+
+function matchingWorkerVerificationMove(
+  value: unknown,
+  source: AnalysisMove | undefined,
+  position: AnalysisTimeline['positions'][number] | undefined,
+  index: number,
+): VerifiedTimelineMove | null {
+  if (!source
+    || !position
+    || !isObject(value)
+    || !isBoundedInteger(value.ply, index + 1, index + 1)
+    || !isBoundedString(value.preFen, 1, MAX_FEN_BYTES)
+    || !isBoundedInteger(value.moveNumber, 1, 1_000_000)
+    || (value.color !== 'w' && value.color !== 'b')
+    || !isBoundedString(value.san, 1, MAX_SAN_BYTES)
+    || !isBoundedString(value.from, 2, 2) || !SQUARE_PATTERN.test(value.from)
+    || !isBoundedString(value.to, 2, 2) || !SQUARE_PATTERN.test(value.to)
+    || !isBoundedString(value.playedMoveUci, 4, 5) || !UCI_PATTERN.test(value.playedMoveUci)
+    || !isBoundedString(value.playedMoveSan, 1, MAX_SAN_BYTES)) return null
+
+  const promotion = source.promotion ?? ''
+  const expectedUci = `${source.from}${source.to}${promotion}`
+  if (!UCI_PATTERN.test(expectedUci)
+    || value.preFen !== position.fen
+    || value.ply !== source.ply
+    || value.moveNumber !== source.moveNumber
+    || value.color !== source.color
+    || value.san !== source.san
+    || value.from !== source.from
+    || value.to !== source.to
+    || value.playedMoveUci !== expectedUci
+    || value.playedMoveSan !== source.san) return null
+
+  return {
+    ply: value.ply,
+    preFen: value.preFen,
+    moveNumber: value.moveNumber,
+    color: value.color,
+    san: value.san,
+    from: value.from as Square,
+    to: value.to as Square,
+    playedMoveUci: value.playedMoveUci,
+    playedMoveSan: value.playedMoveSan,
+  }
+}
+
+/**
+ * Accept a Worker verification only when it still exactly matches the timeline
+ * that was sent. This copies and registers a new main-realm snapshot; a raw
+ * Worker clone, JSON clone, or structural lookalike remains untrusted.
+ */
+export function adoptWorkerRetryTimelineVerification(
+  timeline: RetryTimelineInput,
+  verification: unknown,
+): VerifiedRetryTimeline | null {
+  if (!timeline
+    || !isObject(verification)
+    || verification.schemaVersion !== 1
+    || !isBoundedString(verification.startFen, 1, MAX_FEN_BYTES)
+    || !isBoundedString(verification.finalFen, 1, MAX_FEN_BYTES)
+    || verification.startFen !== timeline.startFen
+    || !Array.isArray(verification.moves)
+    || !Array.isArray(timeline.moves)
+    || !Array.isArray(timeline.positions)
+    || timeline.moves.length === 0
+    || timeline.moves.length > MAX_RETRY_PLIES
+    || verification.moves.length !== timeline.moves.length
+    || timeline.positions.length !== timeline.moves.length + 1
+    || timeline.positions[0]?.fen !== verification.startFen
+    || timeline.positions[timeline.moves.length]?.fen !== verification.finalFen) return null
+
+  const moves: VerifiedTimelineMove[] = []
+  for (const [index, value] of verification.moves.entries()) {
+    const matching = matchingWorkerVerificationMove(
+      value,
+      timeline.moves[index],
+      timeline.positions[index],
+      index,
+    )
+    if (!matching) return null
+    moves.push(matching)
+  }
+  return registerVerifiedRetryTimeline(moves)
 }
 
 /**
@@ -316,16 +444,10 @@ function verifyTimelineMove(
  * external callers and persistence boundaries.
  */
 export function createVerifiedRetryTimeline(
-  timeline: Pick<AnalysisTimeline, 'startFen' | 'positions' | 'moves'>,
+  timeline: RetryTimelineInput,
 ): VerifiedRetryTimeline | null {
-  const moves = verifyTimeline(timeline)
-  if (!moves) return null
-
-  const snapshot: VerifiedRetryTimeline = Object.freeze({
-    moves: Object.freeze(moves.map((move) => Object.freeze({ ...move }))),
-  })
-  verifiedRetryTimelines.add(snapshot)
-  return snapshot
+  const verification = verifyRetryTimelineForWorker(timeline)
+  return verification ? registerVerifiedRetryTimeline(verification.moves) : null
 }
 
 function retryStatusForStreak(correctStreak: number): RetryStatus {

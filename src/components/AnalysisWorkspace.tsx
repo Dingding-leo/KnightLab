@@ -93,10 +93,11 @@ import {
   type LiveGameContinuation,
 } from '../review/liveGameContinuation'
 import {
+  adoptWorkerRetryTimelineVerification,
   createRetryItemFromVerifiedTimeline,
-  createVerifiedRetryTimeline,
   isRetryEligibleReviewMove,
   type RetryItem,
+  type VerifiedRetryTimeline,
 } from '../review/retry'
 import {
   MOVE_LIST_INITIAL_VISIBLE_ROWS,
@@ -118,8 +119,8 @@ interface AnalysisWorkspaceProps {
   /** Another local engine task has priority over optional review analysis. */
   engineBusy?: boolean
   engineBusyMessage?: string
-  /** Release an idle Play-only browser engine before an explicit full review. */
-  onFullReviewStarting?: () => void
+  /** Release an idle Play-only browser engine before Review needs a fresh analysis Worker. */
+  onReviewEngineStarting?: () => void
   currentPgn: string
   enginePath: string | null
   threads: number
@@ -184,6 +185,8 @@ type RetrySaveAction = 'batch' | 'single'
 interface RetryPracticeButtonProps {
   action: RetrySaveAction
   savingAction: RetrySaveAction | null
+  preparing?: boolean
+  disabled?: boolean
   className?: string
   onClick: () => void
 }
@@ -197,27 +200,42 @@ export function RetrySaveNotice({ action }: { action: RetrySaveAction | null }) 
 export function RetryPracticeButton({
   action,
   savingAction,
+  preparing = false,
+  disabled = false,
   className,
   onClick,
 }: RetryPracticeButtonProps) {
   const saving = savingAction !== null
   const active = savingAction === action
+  const waiting = preparing && !saving
   const label = active
     ? action === 'batch' ? 'Preparing key moments…' : 'Preparing this position…'
+    : waiting
+      ? action === 'batch' ? 'Checking key moments…' : 'Checking this position…'
     : action === 'batch' ? 'Practice key moments' : 'Practice this position'
 
   return (
     <button
       className={className}
       type="button"
-      disabled={saving}
-      aria-busy={active}
+      disabled={saving || waiting || disabled}
+      aria-busy={active || waiting}
       onClick={onClick}
     >
-      {active ? <LoaderCircle className="spin" size={15} aria-hidden="true" /> : <PlayCircle size={15} aria-hidden="true" />}
+      {active || waiting ? <LoaderCircle className="spin" size={15} aria-hidden="true" /> : <PlayCircle size={15} aria-hidden="true" />}
       {label}
     </button>
   )
+}
+
+export function RetryPreparationNotice({ preparing, unavailable }: { preparing: boolean; unavailable: boolean }) {
+  if (preparing) {
+    return <p className="review-retained" role="status" aria-live="polite">Checking practice options locally…</p>
+  }
+  if (unavailable) {
+    return <p className="review-retained" role="status">Practice positions could not be safely prepared for this game.</p>
+  }
+  return null
 }
 
 interface LiveGameContinuationNoticeProps {
@@ -255,6 +273,24 @@ const effortOptions = {
 // This keeps quick scrubbing responsive and avoids starting searches that are
 // very likely to be cancelled by the next position.
 const AMBIENT_ANALYSIS_IDLE_DELAY_MS = 350
+
+/**
+ * Let React commit and the browser present a completed review before the
+ * optional persistence snapshot does its own strict PGN validation. The work
+ * remains deliberately detached so a completed review is still saved after a
+ * player changes workspace.
+ */
+function afterNextPaint(callback: () => void): void {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    setTimeout(callback, 0)
+    return
+  }
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      window.setTimeout(callback, 0)
+    })
+  })
+}
 
 type Effort = keyof typeof effortOptions
 type PromotionPiece = Extract<PieceSymbol, 'q' | 'r' | 'b' | 'n'>
@@ -557,7 +593,7 @@ export function AnalysisWorkspace({
   desktop,
   engineBusy = false,
   engineBusyMessage,
-  onFullReviewStarting,
+  onReviewEngineStarting,
   currentPgn,
   enginePath,
   threads,
@@ -618,6 +654,9 @@ export function AnalysisWorkspace({
   const [reviewOrigin, setReviewOrigin] = useState<'saved' | 'restored' | null>(null)
   const [retrySavingAction, setRetrySavingAction] = useState<RetrySaveAction | null>(null)
   const [retryError, setRetryError] = useState('')
+  const [verifiedRetryTimeline, setVerifiedRetryTimeline] = useState<VerifiedRetryTimeline | null>(null)
+  const [retryTimelinePreparing, setRetryTimelinePreparing] = useState(false)
+  const [retryPreparationUnavailable, setRetryPreparationUnavailable] = useState(false)
   const client = useRef<StockfishAnalysisClient | null>(null)
   const ambientAnalysisCache = useRef(new AmbientAnalysisCache())
   const reviewClient = useRef<StockfishAnalysisClient | null>(null)
@@ -630,8 +669,10 @@ export function AnalysisWorkspace({
   const fileImportGate = useRef(createLatestRequestGate())
   const timelineParseGate = useRef(createLatestRequestGate())
   const liveTimelineGate = useRef(createLatestRequestGate())
+  const retryTimelineGate = useRef(createLatestRequestGate())
   const timelineParser = useRef<TimelineWorkerClient | null>(null)
   const liveTimelineParser = useRef<TimelineWorkerClient | null>(null)
+  const retryTimelineVerifier = useRef<TimelineWorkerClient | null>(null)
   const initialTimelineParse = useRef(initialPgnNeedsWorker)
   const promotionChoiceRef = useRef<HTMLButtonElement | null>(null)
   const normalizedCurrentPgn = useMemo(() => currentPgn.trim(), [currentPgn])
@@ -676,13 +717,6 @@ export function AnalysisWorkspace({
     () => timeline.source === 'pgn' && timeline.moves.length && !fullReviewOverPlyLimit ? createReviewKey(timeline) : null,
     [fullReviewOverPlyLimit, timeline],
   )
-  // A completed report can surface several training calls-to-action while the
-  // player browses it. Validate the immutable game replay once, then retain a
-  // private snapshot so cursor movement only checks the selected ply.
-  const verifiedRetryTimeline = useMemo(() => {
-    if (!review || !reviewKey) return null
-    return createVerifiedRetryTimeline(timeline)
-  }, [review, reviewKey, timeline])
   const fullReviewAction = fullReviewActionFor({
     engineBusy,
     reviewHydrating: reviewHydrating || timelineLoading,
@@ -707,19 +741,21 @@ export function AnalysisWorkspace({
     if (!variation || !selectedVariationSquare || variationPromotion || variationAtLimit) return new Set<Square>()
     return new Set<Square>(legalMovesFrom(boardGame, selectedVariationSquare).map((move) => move.to))
   }, [boardGame, selectedVariationSquare, variation, variationAtLimit, variationPromotion])
-  const selectedRetryEligible = Boolean(
-    selectedReview
-    && reviewKey
-    && verifiedRetryTimeline
-    && isRetryEligibleReviewMove(selectedReview),
-  )
   const batchRetryCandidates = useMemo(() => {
-    if (!review || !reviewKey || !verifiedRetryTimeline) return []
+    if (!review || !reviewKey || !retryStore) return []
     return review.moves
       .filter(isRetryEligibleReviewMove)
       .sort(compareRetryCandidates)
       .slice(0, 12)
-  }, [review, reviewKey, verifiedRetryTimeline])
+  }, [review, reviewKey, retryStore])
+  const hasRetryCandidates = batchRetryCandidates.length > 0
+  const selectedRetryEligible = Boolean(
+    selectedReview
+    && reviewKey
+    && retryStore
+    && verifiedRetryTimeline
+    && isRetryEligibleReviewMove(selectedReview),
+  )
   const retrySaving = retrySavingAction !== null
   const moveRows = useMemo(
     () => {
@@ -748,6 +784,70 @@ export function AnalysisWorkspace({
     liveTimelineParser.current ??= new TimelineWorkerClient()
     return liveTimelineParser.current
   }, [])
+
+  const cancelRetryTimelinePreparation = useCallback(() => {
+    retryTimelineGate.current.invalidate()
+    const verifier = retryTimelineVerifier.current
+    retryTimelineVerifier.current = null
+    verifier?.dispose()
+    setVerifiedRetryTimeline(null)
+    setRetryTimelinePreparing(false)
+    setRetryPreparationUnavailable(false)
+  }, [])
+
+  // A full replay is essential before a retry can be saved, but it is not
+  // essential to paint the completed report. Keep this optional verification
+  // on a short-lived, dedicated Worker so it cannot cancel a PGN import or
+  // hold scorecards and navigation on the React interaction thread.
+  useEffect(() => {
+    const gate = retryTimelineGate.current
+    gate.invalidate()
+    const previous = retryTimelineVerifier.current
+    retryTimelineVerifier.current = null
+    previous?.dispose()
+    setVerifiedRetryTimeline(null)
+    setRetryTimelinePreparing(false)
+    setRetryPreparationUnavailable(false)
+    setRetryError('')
+
+    if (!review || !reviewKey || !retryStore || !hasRetryCandidates) return
+
+    const requestId = gate.begin()
+    const verifier = new TimelineWorkerClient()
+    retryTimelineVerifier.current = verifier
+    setRetryTimelinePreparing(true)
+    void verifier.verifyRetryTimeline(timeline)
+      .then((verification) => {
+        if (!mounted.current
+          || !gate.isCurrent(requestId)
+          || retryTimelineVerifier.current !== verifier) return
+        const snapshot = adoptWorkerRetryTimelineVerification(timeline, verification)
+        setVerifiedRetryTimeline(snapshot)
+        setRetryPreparationUnavailable(snapshot === null)
+      })
+      .catch((error: unknown) => {
+        if (!mounted.current
+          || !gate.isCurrent(requestId)
+          || retryTimelineVerifier.current !== verifier
+          || (error instanceof Error && error.name === 'AbortError')) return
+        setRetryPreparationUnavailable(true)
+      })
+      .finally(() => {
+        if (!mounted.current
+          || !gate.isCurrent(requestId)
+          || retryTimelineVerifier.current !== verifier) return
+        retryTimelineVerifier.current = null
+        verifier.dispose()
+        setRetryTimelinePreparing(false)
+      })
+
+    return () => {
+      if (!gate.isCurrent(requestId)) return
+      gate.invalidate()
+      if (retryTimelineVerifier.current === verifier) retryTimelineVerifier.current = null
+      verifier.dispose()
+    }
+  }, [hasRetryCandidates, review, reviewKey, retryStore, timeline])
 
   const clearVariationInteraction = useCallback(() => {
     setVariation(null)
@@ -907,6 +1007,10 @@ export function AnalysisWorkspace({
     setAnalysis(null)
     setAnalysisError('')
     const timer = window.setTimeout(() => {
+      // Play can retain a browser Stockfish runtime between moves. Release it
+      // immediately before this uncached Review request starts so lower-power
+      // devices never allocate two WASM engines and hashes at once.
+      onReviewEngineStarting?.()
       void analysisClient.analyze(displayedPosition.fen, enginePath, settings)
         .then((response) => {
           if (!active) return
@@ -929,12 +1033,13 @@ export function AnalysisWorkspace({
       window.clearTimeout(timer)
       analysisClient.cancel()
     }
-  }, [desktop, displayedPosition.fen, effort, enabled, engineBusy, engineHashMb, enginePath, engineThreads, multiPv, positionTerminal, reviewRunning, timelineLoading])
+  }, [desktop, displayedPosition.fen, effort, enabled, engineBusy, engineHashMb, enginePath, engineThreads, multiPv, onReviewEngineStarting, positionTerminal, reviewRunning, timelineLoading])
 
   useEffect(() => {
     const importGate = fileImportGate.current
     const parseGate = timelineParseGate.current
     const liveGate = liveTimelineGate.current
+    const retryGate = retryTimelineGate.current
     mounted.current = true
     return () => {
       mounted.current = false
@@ -942,6 +1047,7 @@ export function AnalysisWorkspace({
       importGate.invalidate()
       parseGate.invalidate()
       liveGate.invalidate()
+      retryGate.invalidate()
       reviewAbort.current?.abort()
       disposeAndClearClient(client)
       disposeAndClearClient(reviewClient)
@@ -949,6 +1055,8 @@ export function AnalysisWorkspace({
       timelineParser.current = null
       liveTimelineParser.current?.dispose()
       liveTimelineParser.current = null
+      retryTimelineVerifier.current?.dispose()
+      retryTimelineVerifier.current = null
       reviewAbort.current = null
     }
   }, [])
@@ -1088,6 +1196,7 @@ export function AnalysisWorkspace({
     reviewAbort.current?.abort()
     disposeAndClearClient(reviewClient)
     reviewAbort.current = null
+    cancelRetryTimelinePreparation()
     fileImportGate.current.invalidate()
     const parseRequestId = parseGate.begin()
     timelineParser.current?.cancel()
@@ -1152,17 +1261,18 @@ export function AnalysisWorkspace({
       if (parseGate.isCurrent(parseRequestId)) parseGate.invalidate()
       activeParser?.cancel()
     }
-  }, [clearVariationInteraction, getTimelineParser, onRequestedReviewTargetHandled, requestedReviewTarget, reviewStore])
+  }, [cancelRetryTimelinePreparation, clearVariationInteraction, getTimelineParser, onRequestedReviewTargetHandled, requestedReviewTarget, reviewStore])
 
   const stopFullReview = useCallback(() => {
     reviewRunVersion.current += 1
     reviewAbort.current?.abort()
     disposeAndClearClient(reviewClient)
     reviewAbort.current = null
+    cancelRetryTimelinePreparation()
     setReviewRunning(false)
     setReviewSaving(false)
     setReviewProgress(null)
-  }, [])
+  }, [cancelRetryTimelinePreparation])
 
   const startFullReview = async () => {
     if (!timeline.moves.length || reviewRunning || engineBusy || reviewHydrating || timelineLoading) return
@@ -1172,7 +1282,8 @@ export function AnalysisWorkspace({
     }
     clearVariationInteraction()
     fileImportGate.current.invalidate()
-    onFullReviewStarting?.()
+    cancelRetryTimelinePreparation()
+    onReviewEngineStarting?.()
     // Browser ambient and full-review clients each own a Worker. Full review
     // intentionally pauses candidate lines, so release that idle WebAssembly
     // runtime before the heavier sequential job creates its own client.
@@ -1200,6 +1311,7 @@ export function AnalysisWorkspace({
     setReview(null)
     setReviewOrigin(null)
     setReviewError('')
+    setRetryError('')
     setReviewProgress({ completedPly: 0, totalPly: timeline.moves.length, stage: 'before' })
     try {
       const result = await runGameReview(
@@ -1217,33 +1329,36 @@ export function AnalysisWorkspace({
       setReviewOrigin(null)
       setReviewProgress(null)
       if (!reviewStore) return
-      try {
-        const record = createPersistedReview(timeline, result)
-        setReviewSaving(true)
-        void saveCompletedReviewInBackground({
-          save: (savedRecord) => reviewStore.save(savedRecord),
-          record,
-          isCurrent: () => isReviewRunCurrent(runVersion),
-          // This updates durable Library/Insights metadata. It intentionally
-          // survives leaving Review after the database write has succeeded.
-          onPersisted: (savedRecord) => onReviewSaved?.(savedRecord),
-          onSaved: () => {
-            setReviewSaving(false)
-            setReviewOrigin('saved')
-          },
-          onFailed: (error) => {
-            setReviewSaving(false)
-            setReviewError(error instanceof Error
-              ? `Review is ready, but it could not be saved locally: ${error.message}`
-              : 'Review is ready, but it could not be saved locally.')
-          },
-        })
-      } catch (error) {
-        if (!isReviewRunCurrent(runVersion)) return
-        setReviewError(error instanceof Error
-          ? `Review is ready, but it could not be saved locally: ${error.message}`
-          : 'Review is ready, but it could not be saved locally.')
-      }
+      setReviewSaving(true)
+      afterNextPaint(() => {
+        try {
+          const record = createPersistedReview(timeline, result)
+          void saveCompletedReviewInBackground({
+            save: (savedRecord) => reviewStore.save(savedRecord),
+            record,
+            isCurrent: () => isReviewRunCurrent(runVersion),
+            // This updates durable Library/Insights metadata. It intentionally
+            // survives leaving Review after the database write has succeeded.
+            onPersisted: (savedRecord) => onReviewSaved?.(savedRecord),
+            onSaved: () => {
+              setReviewSaving(false)
+              setReviewOrigin('saved')
+            },
+            onFailed: (error) => {
+              setReviewSaving(false)
+              setReviewError(error instanceof Error
+                ? `Review is ready, but it could not be saved locally: ${error.message}`
+                : 'Review is ready, but it could not be saved locally.')
+            },
+          })
+        } catch (error) {
+          if (!isReviewRunCurrent(runVersion)) return
+          setReviewSaving(false)
+          setReviewError(error instanceof Error
+            ? `Review is ready, but it could not be saved locally: ${error.message}`
+            : 'Review is ready, but it could not be saved locally.')
+        }
+      })
     } catch (error) {
       if (isReviewRunCurrent(runVersion) && !(error instanceof Error && error.name === 'AbortError')) {
         setReviewError(error instanceof Error ? error.message : 'Full-game review failed.')
@@ -1279,6 +1394,7 @@ export function AnalysisWorkspace({
     setReview(null)
     setReviewProgress(null)
     setReviewError('')
+    setRetryError('')
   }, [clearVariationInteraction, stopFullReview])
 
   const parsePgnInWorker = useCallback(async (
@@ -1709,14 +1825,27 @@ export function AnalysisWorkspace({
                   <div><span>Avg loss</span><strong>{review.summary.averageCentipawnLoss}</strong><small>centipawns</small></div>
                   <div><span>Best found</span><strong>{review.summary.bestMoveRate}%</strong><small>of moves</small></div>
                 </div>
+                {hasRetryCandidates && (
+                  <RetryPreparationNotice
+                    preparing={retryTimelinePreparing}
+                    unavailable={retryPreparationUnavailable}
+                  />
+                )}
                 {batchRetryCandidates.length > 0 && (
-                  <div className="review-practice-callout" aria-busy={retrySaving}>
+                  <div className="review-practice-callout" aria-busy={retrySaving || retryTimelinePreparing}>
                     <div>
                       <span>From your games</span>
                       <strong>{Math.min(batchRetryCandidates.length, 3)} key moment{batchRetryCandidates.length === 1 ? '' : 's'} selected for practice</strong>
                       <small>Replay the saved Stockfish line without revealing it first.</small>
                     </div>
-                    <RetryPracticeButton className="primary-button" action="batch" savingAction={retrySavingAction} onClick={practiceBatchRetries} />
+                    <RetryPracticeButton
+                      className="primary-button"
+                      action="batch"
+                      savingAction={retrySavingAction}
+                      preparing={retryTimelinePreparing}
+                      disabled={retryPreparationUnavailable || !verifiedRetryTimeline}
+                      onClick={practiceBatchRetries}
+                    />
                   </div>
                 )}
                 {review.summary.turningPoints.length > 0 && (

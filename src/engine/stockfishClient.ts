@@ -209,9 +209,9 @@ export class HybridEngineClient {
   }
 
   /**
-   * A full Review is an explicit, higher-cost browser task and is only allowed
-   * once Play is idle. Release Play's retained WebAssembly runtime so that
-   * review does not keep a second Stockfish Worker and hash allocation alive.
+   * Review analysis is only allowed once Play is idle. Release Play's retained
+   * WebAssembly runtime so an uncached candidate line or full review never
+   * keeps a second Stockfish Worker and hash allocation alive.
    */
   releaseIdleBrowserRuntime(): void {
     if (this.disposed || this.desktop) return

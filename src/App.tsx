@@ -585,6 +585,10 @@ export default function App() {
     setTab((current) => current === next ? current : next)
   }, [])
 
+  const releaseIdleBrowserRuntimeForReview = useCallback(() => {
+    botClient.current?.releaseIdleBrowserRuntime()
+  }, [])
+
   const openFreshGameSetup = () => {
     setupAutoCollapsed.current = false
     setSetupOpen(true)
@@ -2224,7 +2228,7 @@ export default function App() {
                 engineBusyMessage={premoveWindow
                   ? 'The live bot move has priority. Review starts as soon as it finishes.'
                   : 'Stockfish verification has priority. Review starts as soon as the local check finishes.'}
-                onFullReviewStarting={() => botClient.current?.releaseIdleBrowserRuntime()}
+                onReviewEngineStarting={releaseIdleBrowserRuntimeForReview}
                 currentPgn={sharePgn}
                 enginePath={engineSettings.enginePath}
                 threads={engineSettings.threads}

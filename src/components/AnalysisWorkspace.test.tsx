@@ -7,6 +7,7 @@ import {
   AnalysisWorkspace,
   CoachEvidenceCard,
   LiveGameContinuationNotice,
+  RetryPreparationNotice,
   RetryPracticeButton,
   RetrySaveNotice,
   ReviewSaveNotice,
@@ -556,6 +557,22 @@ describe('full-review background persistence', () => {
 })
 
 describe('review-to-train handoff feedback', () => {
+  it('keeps practice visible but safely disabled while its local replay is checked', () => {
+    const markup = renderToStaticMarkup(
+      <>
+        <RetryPracticeButton action="batch" savingAction={null} preparing onClick={() => undefined} />
+        <RetryPreparationNotice preparing unavailable={false} />
+      </>,
+    )
+
+    expect(markup).toContain('Checking key moments…')
+    expect(markup).toContain('Checking practice options locally…')
+    expect(markup).toContain('role="status"')
+    expect(markup).toContain('aria-live="polite"')
+    expect(markup).toContain('aria-busy="true"')
+    expect(markup).toContain('disabled=""')
+  })
+
   it('changes the active practice label, announces progress, and disables both actions while saving', () => {
     const markup = renderToStaticMarkup(
       <>

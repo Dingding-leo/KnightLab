@@ -4,6 +4,7 @@ import {
   type AnalysisFileImportInput,
   type AnalysisFileImportResult,
 } from './fileImport'
+import type { RetryTimelineInput, RetryTimelineVerification } from '../review/retry'
 import type {
   TimelineWorkerRequest,
   TimelineWorkerResponse,
@@ -20,11 +21,13 @@ export interface TimelineWorkerLike {
 
 type WorkerFactory = () => TimelineWorkerLike
 
+type TimelineWorkerValue = AnalysisTimeline | AnalysisFileImportResult | RetryTimelineVerification | null
+
 type PendingRequest = {
   id: number
   type: TimelineWorkerRequest['type']
   request: TimelineWorkerRequest
-  resolve: (value: AnalysisTimeline | AnalysisFileImportResult) => void
+  resolve: (value: TimelineWorkerValue) => void
   reject: (reason: Error) => void
 }
 
@@ -83,6 +86,15 @@ export class TimelineWorkerClient {
     return this.request({ type: 'parse-file', id: 0, input }) as Promise<AnalysisFileImportResult>
   }
 
+  /**
+   * Retry verification always has its own transient client. A Worker-less
+   * runtime resolves this optional enhancement as unavailable instead of
+   * replaying a long game on the interaction thread.
+   */
+  verifyRetryTimeline(timeline: RetryTimelineInput): Promise<RetryTimelineVerification | null> {
+    return this.request({ type: 'verify-retry-timeline', id: 0, timeline }) as Promise<RetryTimelineVerification | null>
+  }
+
   cancel(message = 'Game preparation cancelled.'): void {
     const pending = this.pending
     const hasActiveRequest = pending !== null || this.fallbackTimer !== null
@@ -113,7 +125,7 @@ export class TimelineWorkerClient {
     this.worker = null
   }
 
-  private request(request: TimelineWorkerRequest): Promise<AnalysisTimeline | AnalysisFileImportResult> {
+  private request(request: TimelineWorkerRequest): Promise<TimelineWorkerValue> {
     if (this.disposed) return Promise.reject(new Error('Game preparation client is disposed.'))
     this.cancel('Superseded by a newer game preparation request.')
     const id = this.nextId++
@@ -136,9 +148,10 @@ export class TimelineWorkerClient {
         return
       }
 
-      // Web Workers are available in every supported target. This fallback
-      // preserves local-only functionality in an unusual restricted runtime
-      // and still yields once so the loading state can paint first.
+      // Web Workers are available in every supported target. Parsing still
+      // has a yielded local fallback in an unusual restricted runtime, while
+      // optional retry preparation stays unavailable rather than replaying a
+      // long game on the interaction thread.
       this.scheduleFallback(next)
     })
   }
@@ -179,7 +192,9 @@ export class TimelineWorkerClient {
       try {
         const value = request.type === 'parse-pgn'
           ? createPgnTimeline(request.pgn)
-          : importAnalysisFile(request.input)
+          : request.type === 'parse-file'
+            ? importAnalysisFile(request.input)
+            : null
         this.finishSuccess(request.id, value)
       } catch (error) {
         this.finishError(request.id, error instanceof Error ? error : new Error('Could not prepare this game locally.'))
@@ -202,10 +217,14 @@ export class TimelineWorkerClient {
       this.finishSuccess(response.id, response.result)
       return
     }
+    if (response.type === 'retry-timeline-result' && pending.type === 'verify-retry-timeline') {
+      this.finishSuccess(response.id, response.verification)
+      return
+    }
     this.finishError(response.id, new Error('Game preparation worker returned an unexpected result.'))
   }
 
-  private finishSuccess(id: number, value: AnalysisTimeline | AnalysisFileImportResult): void {
+  private finishSuccess(id: number, value: TimelineWorkerValue): void {
     const pending = this.pending
     if (!pending || pending.id !== id) return
     this.pending = null

@@ -43,7 +43,7 @@ describe('Hybrid engine startup', () => {
     client.dispose()
   })
 
-  it('releases an idle browser Stockfish runtime before a full review can allocate its own Worker', () => {
+  it('releases an idle browser Stockfish runtime before Review can allocate its own Worker', () => {
     const client = new HybridEngineClient()
     const dispose = vi.fn()
     const internal = client as unknown as {

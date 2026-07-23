@@ -4,12 +4,14 @@ import { createPgnTimeline, type AnalysisTimeline } from '../analysis/analysisMo
 import type { CoachGuidance } from './coach'
 import {
   RETRY_SCHEDULE_DAYS,
+  adoptWorkerRetryTimelineVerification,
   createRetryItem,
   createRetryItemFromVerifiedTimeline,
   createVerifiedRetryTimeline,
   evaluateRetryMove,
   isRetryEligibleReviewMove,
   recordRetryAttempt,
+  verifyRetryTimelineForWorker,
   type RetryItem,
   type VerifiedRetryTimeline,
 } from './retry'
@@ -272,6 +274,57 @@ describe('retry item domain', () => {
     } finally {
       move.mockRestore()
     }
+  })
+
+  it('adopts only a matching Worker replay without replaying the long game on the UI thread', () => {
+    const timeline = repeatedKnightTimeline()
+    const first = reviewedMove(timeline, 1)
+    const verification = verifyRetryTimelineForWorker(timeline)
+    if (!verification) throw new Error('Expected a Worker retry verification.')
+
+    const move = vi.spyOn(Chess.prototype, 'move')
+    try {
+      const verifiedTimeline = adoptWorkerRetryTimelineVerification(timeline, verification)
+      if (!verifiedTimeline) throw new Error('Expected the Worker verification to be adopted.')
+
+      // All chess.js work occurred in the Worker-side verification above.
+      // Adoption only compares immutable facts, freezes a new snapshot, and
+      // registers its main-realm identity.
+      expect(move).not.toHaveBeenCalled()
+      expect(createRetryItemFromVerifiedTimeline({
+        verifiedTimeline,
+        move: first,
+        reviewKey: '0123456789abcdef',
+        now: '2026-07-22T00:00:00.000Z',
+      })).not.toBeNull()
+      expect(move.mock.calls.length).toBeLessThan(30)
+    } finally {
+      move.mockRestore()
+    }
+  })
+
+  it('fails closed when a Worker replay payload no longer matches the timeline', () => {
+    const timeline = createPgnTimeline('1. e4 e5 2. Nf3 Nc6 *')
+    const verification = verifyRetryTimelineForWorker(timeline)
+    if (!verification) throw new Error('Expected a Worker retry verification.')
+
+    const corruptions = [
+      (value: typeof verification) => { value.startFen = 'not a FEN' },
+      (value: typeof verification) => { value.finalFen = timeline.positions[2]!.fen },
+      (value: typeof verification) => { value.moves[1]!.preFen = timeline.positions[0]!.fen },
+      (value: typeof verification) => { value.moves[1]!.san = 'Na9' },
+      (value: typeof verification) => { value.moves[1]!.playedMoveUci = 'a1a8' },
+      (value: typeof verification) => { value.moves[1]!.ply = 1 },
+    ]
+
+    for (const corrupt of corruptions) {
+      const candidate = JSON.parse(JSON.stringify(verification)) as typeof verification
+      corrupt(candidate)
+      expect(adoptWorkerRetryTimelineVerification(timeline, candidate)).toBeNull()
+    }
+
+    const changedTimeline = createPgnTimeline('1. d4 d5 2. c4 e6 *')
+    expect(adoptWorkerRetryTimelineVerification(changedTimeline, verification)).toBeNull()
   })
 
   it('uses a deterministic 1, 3, 7, 14, 30 day schedule and resets alternatives for immediate retry', () => {

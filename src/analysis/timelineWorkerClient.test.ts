@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TimelineWorkerRequest, TimelineWorkerResponse } from './timelineWorkerProtocol'
+import { createPgnTimeline } from './analysisModel'
+import { verifyRetryTimelineForWorker } from '../review/retry'
 import {
   TimelineWorkerClient,
   type TimelineWorkerLike,
@@ -115,6 +117,66 @@ describe('TimelineWorkerClient', () => {
       moves: [{ san: 'e4' }, { san: 'e5' }],
     })
     expect(worker.terminated).toBe(true)
+    client.dispose()
+  })
+
+  it('returns a matching retry verification from its dedicated Worker request', async () => {
+    const timeline = createPgnTimeline('1. e4 e5 2. Nf3 Nc6 *')
+    const verification = verifyRetryTimelineForWorker(timeline)
+    if (!verification) throw new Error('Expected a retry verification.')
+    const worker = new FakeTimelineWorker()
+    const client = new TimelineWorkerClient(() => worker, true)
+    const pending = client.verifyRetryTimeline(timeline)
+    const request = worker.messages[0]
+    if (!request || request.type !== 'verify-retry-timeline') throw new Error('Expected a retry verification request.')
+
+    worker.reply({
+      type: 'retry-timeline-result',
+      id: request.id,
+      verification,
+    })
+
+    await expect(pending).resolves.toEqual(verification)
+    client.dispose()
+  })
+
+  it('keeps optional retry preparation off the main thread when Workers are unavailable', async () => {
+    const timeline = createPgnTimeline('1. e4 e5 2. Nf3 Nc6 *')
+    const client = new TimelineWorkerClient(() => {
+      throw new Error('Workers unavailable')
+    }, false)
+
+    await expect(client.verifyRetryTimeline(timeline)).resolves.toBeNull()
+    client.dispose()
+  })
+
+  it('terminates an in-flight retry verification as soon as the review changes', async () => {
+    const worker = new FakeTimelineWorker()
+    const client = new TimelineWorkerClient(() => worker, true)
+    const pending = client.verifyRetryTimeline(createPgnTimeline('1. e4 e5 *'))
+
+    client.cancel('Review changed.')
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError', message: 'Review changed.' })
+    expect(worker.terminated).toBe(true)
+    client.dispose()
+  })
+
+  it('rejects a mismatched Worker result for an in-flight retry verification', async () => {
+    const timeline = createPgnTimeline('1. e4 e5 *')
+    const worker = new FakeTimelineWorker()
+    const client = new TimelineWorkerClient(() => worker, true)
+    const pending = client.verifyRetryTimeline(timeline)
+    const request = worker.messages[0]
+    if (!request) throw new Error('Expected a retry verification request.')
+
+    worker.reply({
+      type: 'timeline-result',
+      id: request.id,
+      timeline,
+    })
+
+    await expect(pending).rejects.toThrow('unexpected result')
     client.dispose()
   })
 })
