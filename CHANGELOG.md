@@ -4,6 +4,8 @@
 
 ### Added
 
+- Long active-game recovery now paints Play first, then restores PGN JSON, complete `chess.js` state and verbose notation in a cancellable latest-wins Worker; the recovery shell blocks interaction, bot work and autosave until the verified snapshot is adopted, preserves undo/threefold-repetition/history and rechecks browser storage freshness after responses and errors before replacing the board. Malformed, oversize or continuously changing deferred mirrors require an explicit safe reset instead of being silently overwritten
+- Desktop startup now treats SQLite as the sole active-session authority from the first render; the browser active-session mirror is read only during an empty-database migration, and active-session inputs are bounded to a 512 KiB PGN / 1 MiB raw payload
 - Live Play now uses still-smaller bounded bot ceilings: Easy/Balanced/Strong use 50/50/60 ms and 1k/1.5k/3k nodes with one thread and 16 MB Hash; desktop full Review also releases its shared native Stockfish process once its own work has settled and no newer task owns the engine
 - Browser PWA installs now keep the optional 7 MB Stockfish Worker/WebAssembly pair out of the first-visit app-shell precache, then retain it with a bounded cache-first route after a player actually uses bot Play or Review
 - Active-game browser/SQLite snapshots now keep only the latest state until a short idle window, eliminating synchronous long-session storage writes from the move path while flushing on terminal results, page hide and explicit session replacement

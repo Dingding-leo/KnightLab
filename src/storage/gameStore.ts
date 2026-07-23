@@ -17,6 +17,15 @@ export const LIBRARY_STORAGE_KEY = 'knightclub.game-library.v1'
 const SESSION_KEY = 'knightclub.active-session.v1'
 const PREFERENCES_KEY = 'knightclub.preferences.v1'
 const MAX_GAMES = 500
+/** Keep a malformed browser mirror from asking the UI to replay an unbounded PGN. */
+export const MAX_ACTIVE_SESSION_PGN_BYTES = 524_288
+/**
+ * A session also carries clock snapshots and a little metadata. This leaves
+ * room for a legal maximum-sized PGN plus a long clock history while rejecting
+ * pathological browser payloads before JSON.parse allocates a large object
+ * graph.
+ */
+export const MAX_ACTIVE_SESSION_RAW_CHARS = 1_048_576
 
 export type HumanColor = 'w' | 'b'
 export type ColorChoice = 'white' | 'black' | 'random'
@@ -154,11 +163,14 @@ export function toStoredGameSummary(game: StoredGame): StoredGameSummary {
   return summary
 }
 
-function isActiveSession(value: unknown): value is ActiveSession {
+function isActiveSession(value: unknown, verifyPgnBytes = true): value is ActiveSession {
   if (!hasValidPlayerSideFields(value) || !hasValidBotProfileField(value)) return false
   const session = value as Partial<ActiveSession>
   return typeof session.pgn === 'string'
-    && typeof session.startFen === 'string' && session.startFen.length > 0
+    && (verifyPgnBytes
+      ? new TextEncoder().encode(session.pgn).byteLength <= MAX_ACTIVE_SESSION_PGN_BYTES
+      : session.pgn.length <= MAX_ACTIVE_SESSION_PGN_BYTES)
+    && typeof session.startFen === 'string' && session.startFen.length > 0 && session.startFen.length <= 1_024
     && (session.mode === 'bot' || session.mode === 'local')
     && (session.botLevel === 'easy' || session.botLevel === 'balanced' || session.botLevel === 'strong')
     && (session.orientation === 'white' || session.orientation === 'black')
@@ -355,8 +367,45 @@ export function normalizeActiveSession(value: unknown): ActiveSession | null {
   return isActiveSession(value) ? value : null
 }
 
+/**
+ * A Worker has already performed the exact byte validation. On its return
+ * path, avoid allocating another large UTF-8 copy just to re-check the same
+ * PGN before restoring its verified chess snapshot.
+ */
+export function normalizeHydratedActiveSession(value: unknown): ActiveSession | null {
+  return isActiveSession(value, false) ? value : null
+}
+
+/**
+ * Read the browser mirror without parsing it. Long sessions use this raw
+ * boundary so their JSON and PGN replay can move off Play's first render.
+ */
+export function readActiveSessionRaw(): string | null {
+  const raw = localStorage.getItem(SESSION_KEY)
+  return raw !== null && raw.length <= MAX_ACTIVE_SESSION_RAW_CHARS ? raw : null
+}
+
+/**
+ * Keep an over-limit mirror distinct from a missing one. Callers must never
+ * use a capped `readActiveSessionRaw()` result as the sole identity check,
+ * otherwise a newer oversized cross-tab write could look like `null` and be
+ * removed accidentally.
+ */
+export function hasOversizedActiveSessionRaw(): boolean {
+  const raw = localStorage.getItem(SESSION_KEY)
+  return raw !== null && raw.length > MAX_ACTIVE_SESSION_RAW_CHARS
+}
+
+/** Pure parser shared by the Worker and the small-session synchronous path. */
+export function parseActiveSessionRaw(raw: string | null): ActiveSession | null {
+  if (!raw
+    || raw.length > MAX_ACTIVE_SESSION_RAW_CHARS
+    || new TextEncoder().encode(raw).byteLength > MAX_ACTIVE_SESSION_RAW_CHARS) return null
+  return normalizeActiveSession(safeParse<unknown>(raw, null))
+}
+
 export function loadActiveSession(): ActiveSession | null {
-  return normalizeActiveSession(safeParse<unknown>(localStorage.getItem(SESSION_KEY), null))
+  return parseActiveSessionRaw(readActiveSessionRaw())
 }
 
 export function clearActiveSession(): void {

@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   LIBRARY_STORAGE_KEY,
+  MAX_ACTIVE_SESSION_PGN_BYTES,
+  MAX_ACTIVE_SESSION_RAW_CHARS,
+  hasOversizedActiveSessionRaw,
   isStoredGameSummary,
   linkLibraryGameSummariesToReview,
   linkLibraryGamesToReview,
@@ -10,8 +13,10 @@ import {
   normalizeActiveSession,
   normalizeLibrary,
   parseBrowserLibraryRaw,
+  parseActiveSessionRaw,
   readBrowserLibraryRaw,
   readBrowserLibraryRawStrict,
+  readActiveSessionRaw,
   toStoredGameSummary,
 } from './gameStore'
 
@@ -208,5 +213,30 @@ describe('active session normalization', () => {
       botProfileId: 'mira-vale',
     })
     expect(normalizeActiveSession({ ...legacySession, botProfileId: 'champion' })).toBeNull()
+  })
+
+  it('fails closed before parsing an oversized active-session mirror', () => {
+    expect(normalizeActiveSession({
+      ...legacySession,
+      pgn: 'x'.repeat(MAX_ACTIVE_SESSION_PGN_BYTES + 1),
+    })).toBeNull()
+    expect(parseActiveSessionRaw('x'.repeat(MAX_ACTIVE_SESSION_RAW_CHARS + 1))).toBeNull()
+  })
+
+  it('does not confuse an oversized active-session mirror with a missing one', () => {
+    const records = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => records.get(key) ?? null,
+      setItem: (key: string, value: string) => { records.set(key, value) },
+      removeItem: (key: string) => { records.delete(key) },
+    })
+    try {
+      localStorage.setItem('knightclub.active-session.v1', 'x'.repeat(MAX_ACTIVE_SESSION_RAW_CHARS + 1))
+
+      expect(hasOversizedActiveSessionRaw()).toBe(true)
+      expect(readActiveSessionRaw()).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

@@ -4,6 +4,7 @@ import {
   hasValidPlayerSideFields,
   isStoredGameSummary,
   normalizeActiveSession,
+  normalizeHydratedActiveSession,
   type ActiveSession,
   type Preferences,
   type StoredGame,
@@ -88,6 +89,15 @@ function isActiveSession(value: unknown): value is ActiveSession {
   return normalizeActiveSession(value) !== null
 }
 
+/**
+ * Native bootstrap data is already byte-bounded by SQLite/Rust. Avoid making
+ * a second large UTF-8 PGN allocation on the UI thread before the dedicated
+ * active-session Worker performs the full replay and validation.
+ */
+function isHydratedActiveSession(value: unknown): value is ActiveSession {
+  return normalizeHydratedActiveSession(value) !== null
+}
+
 function jsonSize(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength
 }
@@ -113,7 +123,7 @@ function assertGame(value: unknown): asserts value is StoredGame {
 function parseSnapshot(value: unknown): DatabaseSnapshot {
   if (!isObject(value)
     || value.schemaVersion !== CURRENT_SCHEMA_VERSION
-    || !(value.activeSession === null || isActiveSession(value.activeSession))
+    || !(value.activeSession === null || isHydratedActiveSession(value.activeSession))
     || !(value.preferences === null || isObject(value.preferences))
     || !Array.isArray(value.games)
     || value.games.length > MAX_GAMES
@@ -127,7 +137,7 @@ function parseSnapshot(value: unknown): DatabaseSnapshot {
 function parseBootstrap(value: unknown): DatabaseBootstrap {
   if (!isObject(value)
     || value.schemaVersion !== CURRENT_SCHEMA_VERSION
-    || !(value.activeSession === null || isActiveSession(value.activeSession))
+    || !(value.activeSession === null || isHydratedActiveSession(value.activeSession))
     || !(value.preferences === null || isObject(value.preferences))
     || !Number.isInteger(value.gameCount)
     || Number(value.gameCount) < 0

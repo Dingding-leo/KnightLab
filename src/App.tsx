@@ -136,12 +136,15 @@ import {
 import {
   clearActiveSession,
   clearLibrary,
+  DEFAULT_PREFERENCES,
+  hasOversizedActiveSessionRaw,
   linkLibraryGameSummariesToReview,
-  loadActiveSession,
   loadPreferences,
   mergeLibraryGameSummaries,
   mergeLibraryGames,
   normalizePreferences,
+  parseActiveSessionRaw,
+  readActiveSessionRaw,
   readBrowserLibraryRawStrict,
   saveActiveSession,
   saveGame,
@@ -154,6 +157,11 @@ import {
 } from './storage/gameStore'
 import { DatabaseClient } from './storage/databaseClient'
 import { ActiveSessionPersistence } from './storage/activeSessionPersistence'
+import {
+  ActiveSessionHydrationClient,
+  shouldHydrateActiveSessionInBackground,
+} from './storage/activeSessionHydrationClient'
+import type { HydratedActiveSession } from './storage/activeSessionHydration'
 import { LibraryHydrationClient } from './storage/libraryHydrationClient'
 import {
   createReviewKeyFromMoves,
@@ -186,6 +194,7 @@ type Tab = 'play' | 'review' | 'train' | 'library' | 'insights'
 type Promotion = { from: Square; to: Square; choices: PieceSymbol[]; kind: 'move' | 'premove' }
 type DatabaseStatus = { kind: 'browser' | 'migrating' | 'ready' | 'recovered' | 'error'; message: string }
 type LibraryLoadState = 'idle' | 'loading' | 'ready' | 'error'
+type ActiveSessionRestoreState = 'ready' | 'restoring' | 'blocked'
 type ReviewSource = Pick<StoredGame, 'id' | 'pgn'>
 
 const navItems: Array<{ id: Tab; label: string; icon: LucideIcon }> = [
@@ -343,31 +352,47 @@ export function PromotionDialog({ kind, choices, color, onChoose, onCancel }: Pr
   )
 }
 
-function restoreSession(
-  session = loadActiveSession(),
-  preferredProfileId: BotProfileId = DEFAULT_BOT_PROFILE_ID,
-) {
+interface RestoredSession {
+  game: Chess
+  startFen: string
+  mode: GameMode
+  botLevel: BotLevel
+  botProfileId: BotProfileId
+  orientation: 'white' | 'black'
+  humanColor: Color
+  colorChoice: HumanColorChoice
+  timeControl: TimeControl
+  clock: ClockState
+  clockHistory: ClockState[]
+  termination: GameTermination | null
+}
+
+function fallbackSession(preferredProfileId: BotProfileId): RestoredSession {
   const fallbackControl = getTimeControl('unlimited')
-  const fallback = () => {
-    const now = Date.now()
-    const profile = botProfileForId(preferredProfileId)
-    return {
-      game: new Chess(), startFen: STANDARD_START_FEN, mode: 'bot' as GameMode,
-      botLevel: profile.engineLevel, botProfileId: profile.id, orientation: 'white' as const,
-      humanColor: 'w' as Color, colorChoice: 'white' as HumanColorChoice,
-      timeControl: fallbackControl, clock: createReadyClock(fallbackControl, 'w', now),
-      clockHistory: [] as ClockState[], termination: null as GameTermination | null,
-    }
+  const now = Date.now()
+  const profile = botProfileForId(preferredProfileId)
+  return {
+    game: new Chess(), startFen: STANDARD_START_FEN, mode: 'bot',
+    botLevel: profile.engineLevel, botProfileId: profile.id, orientation: 'white',
+    humanColor: 'w', colorChoice: 'white',
+    timeControl: fallbackControl, clock: createReadyClock(fallbackControl, 'w', now),
+    clockHistory: [], termination: null,
   }
-  if (!session) return fallback()
+}
+
+/** Applies session metadata only after its Chess state has been safely restored. */
+function restoreSessionWithGame(
+  session: ActiveSession | null,
+  game: Chess,
+  preferredProfileId: BotProfileId = DEFAULT_BOT_PROFILE_ID,
+): RestoredSession {
+  if (!session) return fallbackSession(preferredProfileId)
   try {
-    if (typeof session.startFen !== 'string' || typeof session.pgn !== 'string') throw new Error('Invalid session')
-    const game = new Chess(session.startFen)
-    if (session.pgn.trim()) game.loadPgn(session.pgn)
+    const fallbackControl = getTimeControl('unlimited')
     const timeControl = isTimeControl(session.timeControl) ? session.timeControl : fallbackControl
     const clock = normalizeClockState(session.clock, timeControl, game.turn(), Date.now())
     const clockHistory = Array.isArray(session.clockHistory)
-      ? session.clockHistory.filter(isClockState)
+      ? session.clockHistory
       : []
     const humanColor: Color = session.humanColor === 'b' ? 'b' : 'w'
     const colorChoice = isHumanColorChoice(session.colorChoice)
@@ -387,7 +412,29 @@ function restoreSession(
     }
   } catch {
     clearActiveSession()
-    return fallback()
+    return fallbackSession(preferredProfileId)
+  }
+}
+
+/** The short-session path stays immediate; long sessions use the Worker below. */
+function restoreSession(
+  session: ActiveSession | null,
+  preferredProfileId: BotProfileId = DEFAULT_BOT_PROFILE_ID,
+): RestoredSession {
+  if (!session) return fallbackSession(preferredProfileId)
+  try {
+    const game = new Chess(session.startFen)
+    if (session.pgn.trim()) game.loadPgn(session.pgn)
+    const sanitizedSession: ActiveSession = {
+      ...session,
+      clockHistory: Array.isArray(session.clockHistory)
+        ? session.clockHistory.filter(isClockState)
+        : [],
+    }
+    return restoreSessionWithGame(sanitizedSession, game, preferredProfileId)
+  } catch {
+    clearActiveSession()
+    return fallbackSession(preferredProfileId)
   }
 }
 
@@ -501,12 +548,34 @@ export function LibraryResults({ games, revealCount, onRevealMore, openingGameId
 }
 
 export default function App() {
-  const initialPreferences = useMemo(loadPreferences, [])
-  const initial = useMemo(
-    () => restoreSession(loadActiveSession(), initialPreferences.botProfileId),
-    [initialPreferences],
-  )
   const desktop = useMemo(() => isTauriRuntime(), [])
+  // SQLite is authoritative on desktop. Do not synchronously consult a stale
+  // browser mirror before its bootstrap decides whether migration is needed.
+  const initialPreferences = useMemo(
+    () => desktop ? DEFAULT_PREFERENCES : loadPreferences(),
+    [desktop],
+  )
+  const initialActiveSessionRaw = useMemo(
+    () => desktop ? null : readActiveSessionRaw(),
+    [desktop],
+  )
+  const initialActiveSessionRawOversized = useMemo(
+    () => !desktop && hasOversizedActiveSessionRaw(),
+    [desktop],
+  )
+  const initialSessionNeedsBackgroundHydration = !desktop
+    && (initialActiveSessionRawOversized
+      || shouldHydrateActiveSessionInBackground(initialActiveSessionRaw))
+  const initialSession = useMemo(
+    () => initialSessionNeedsBackgroundHydration
+      ? null
+      : parseActiveSessionRaw(initialActiveSessionRaw),
+    [initialActiveSessionRaw, initialSessionNeedsBackgroundHydration],
+  )
+  const initial = useMemo(
+    () => restoreSession(initialSession, initialPreferences.botProfileId),
+    [initialPreferences.botProfileId, initialSession],
+  )
   const database = useMemo(() => desktop ? new DatabaseClient() : null, [desktop])
   const [tab, setTab] = useState<Tab>('play')
   const [game, setGameState] = useState(initial.game)
@@ -521,6 +590,9 @@ export default function App() {
   const [clock, setClock] = useState<ClockState>(initial.clock)
   const [clockHistory, setClockHistory] = useState<ClockState[]>(initial.clockHistory)
   const [termination, setTermination] = useState<GameTermination | null>(initial.termination)
+  const [activeSessionRestoreState, setActiveSessionRestoreState] = useState<ActiveSessionRestoreState>(
+    () => desktop || initialSessionNeedsBackgroundHydration ? 'restoring' : 'ready',
+  )
   const [decision, setDecision] = useState<GameDecision | null>(null)
   const [soundsEnabled, setSoundsEnabled] = useState(initialPreferences.soundsEnabled)
   const [engineSettings, setEngineSettings] = useState(initialPreferences.engine)
@@ -609,6 +681,8 @@ export default function App() {
   const tacticsWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const activeSessionPersistence = useRef<ActiveSessionPersistence | null>(null)
   const activeSessionPersistRef = useRef<(session: ActiveSession) => void>(() => {})
+  const activeSessionHydrationClient = useRef<ActiveSessionHydrationClient | null>(null)
+  const activeSessionRestoreVersion = useRef(0)
   const libraryRequestVersion = useRef(0)
   const libraryDetailRequestVersion = useRef(0)
   const pendingNativeGameSaves = useRef<StoredGame[]>([])
@@ -903,6 +977,89 @@ export default function App() {
     verboseHistoryCache.current.set(next, knownVerbose ?? next.history({ verbose: true }))
     setGameState(next)
   }, [])
+  const getActiveSessionHydrationClient = useCallback(() => {
+    activeSessionHydrationClient.current ??= new ActiveSessionHydrationClient()
+    return activeSessionHydrationClient.current
+  }, [])
+  const hydrateStableBrowserActiveSession = useCallback(async (
+    initialRaw: string | null,
+    cancelled: () => boolean = () => false,
+  ) => {
+    let raw = initialRaw
+    // A separate tab can replace the mirror while its previous payload is
+    // parsing, including after an error. Keep recovery bounded: never adopt a
+    // stale game, but also never leave Play spinning forever behind a writer
+    // that changes storage continuously.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (cancelled()) throw new DOMException('Saved game restoration was cancelled.', 'AbortError')
+      let hydrated: HydratedActiveSession | null
+      try {
+        hydrated = await getActiveSessionHydrationClient().hydrateRaw(raw)
+      } catch (error) {
+        if (cancelled()) throw new DOMException('Saved game restoration was cancelled.', 'AbortError')
+        const latestRaw = readActiveSessionRaw()
+        if (latestRaw !== raw) {
+          if (latestRaw === null && hasOversizedActiveSessionRaw()) {
+            return { kind: 'blocked' as const }
+          }
+          raw = latestRaw
+          continue
+        }
+        throw error
+      }
+      if (cancelled()) throw new DOMException('Saved game restoration was cancelled.', 'AbortError')
+      const latestRaw = readActiveSessionRaw()
+      if (latestRaw === raw) return { kind: 'hydrated' as const, hydrated, raw }
+      if (latestRaw === null && hasOversizedActiveSessionRaw()) {
+        // `readActiveSessionRaw()` intentionally caps strings before a Worker
+        // receives them. Do not collapse that distinct state into a missing
+        // mirror during a cross-tab freshness check.
+        return { kind: 'blocked' as const }
+      }
+      raw = latestRaw
+    }
+    return { kind: 'blocked' as const }
+  }, [getActiveSessionHydrationClient])
+  const adoptHydratedActiveSession = useCallback((
+    hydrated: HydratedActiveSession | null,
+    preferredProfileId: BotProfileId,
+  ) => {
+    const restored = hydrated
+      ? restoreSessionWithGame(hydrated.session, hydrated.game, preferredProfileId)
+      : fallbackSession(preferredProfileId)
+    const knownVerbose = hydrated?.game === restored.game ? hydrated.verboseHistory : undefined
+    botRequestVersion.current += 1
+    botClient.current?.cancel()
+    premoveRef.current = null
+    setPremove(null)
+    setGame(restored.game, knownVerbose)
+    setStartFen(restored.startFen); setPreviewPly(null); setMode(restored.mode)
+    setBotLevel(restored.botLevel); setBotProfileId(restored.botProfileId); setOrientation(restored.orientation)
+    setHumanColor(restored.humanColor); setColorChoice(restored.colorChoice)
+    customTimeDraft.current = customTimeDraftFor(restored.timeControl)
+    setCustomTimeOpen(restored.timeControl.category === 'custom')
+    setTimeControl(restored.timeControl); setClock(restored.clock)
+    setClockHistory(restored.clockHistory); setTermination(restored.termination)
+    setSelected(null); setPromotion(null); setDecision(null); setThinking(false)
+    setupAutoCollapsed.current = (knownVerbose?.length ?? 0) > 0
+    setSetupOpen(!setupAutoCollapsed.current)
+    savedPosition.current = terminalSessionFingerprint(
+      restored.game.fen(),
+      restored.termination?.result ?? gameResult(restored.game),
+      restored.game.isGameOver() || Boolean(restored.termination),
+    )
+    return restored
+  }, [setGame])
+  const startFreshInsteadOfRestore = useCallback(() => {
+    activeSessionRestoreVersion.current += 1
+    activeSessionHydrationClient.current?.cancel('Player chose to start a fresh game.')
+    activeSessionPersistence.current?.discard()
+    clearActiveSession()
+    if (database) void database.clearActiveSession().catch(() => {})
+    adoptHydratedActiveSession(null, botProfileId)
+    setNotice('Started a new game.')
+    setActiveSessionRestoreState('ready')
+  }, [adoptHydratedActiveSession, botProfileId, database])
   const verbose = useMemo(() => {
     const cached = verboseHistoryCache.current.get(game)
     if (cached) return cached
@@ -956,6 +1113,8 @@ export default function App() {
     : `Stockfish ${opponentStrength} · ${botProfile.openingCueLabel}`
   const opponentAvatar = isFallbackOpponent ? undefined : { initials: botProfile.initials, tone: botProfile.tone }
   const gameFinished = game.isGameOver() || termination !== null
+  const activeSessionRestoring = activeSessionRestoreState !== 'ready'
+  const activeSessionRestoreBlocked = activeSessionRestoreState === 'blocked'
   const premoveWindow = mode === 'bot'
     && isBotTurn(mode, game.turn(), humanColor)
     && !gameFinished
@@ -974,6 +1133,7 @@ export default function App() {
   }, [game, humanColor, mode, premoveWindow, selected])
   const previewTargets = useMemo(() => new Set<Square>(), [])
   const boardDisabled = previewing
+    || activeSessionRestoring
     || gameFinished
     || !clock.activeColor
     || Boolean(decision)
@@ -1933,6 +2093,7 @@ export default function App() {
   }
 
   const onWindowKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (activeSessionRestoring) return
     if (event.key === 'Escape' && decision) {
       event.preventDefault()
       cancelDecision()
@@ -2019,16 +2180,69 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (desktop || !initialSessionNeedsBackgroundHydration) return
+    let cancelled = false
+    const requestVersion = ++activeSessionRestoreVersion.current
+    // The fallback board is a recovery shell, never a replacement save.
+    activeSessionPersistence.current?.discard()
+    if (initialActiveSessionRawOversized) {
+      setActiveSessionRestoreState('blocked')
+      return
+    }
+    void hydrateStableBrowserActiveSession(
+      initialActiveSessionRaw,
+      () => cancelled || requestVersion !== activeSessionRestoreVersion.current,
+    )
+      .then((result) => {
+        if (cancelled || requestVersion !== activeSessionRestoreVersion.current) return
+        if (result.kind === 'blocked' || (result.hydrated === null && result.raw !== null)) {
+          setActiveSessionRestoreState('blocked')
+          return
+        }
+        adoptHydratedActiveSession(result.hydrated, initialPreferences.botProfileId)
+        setActiveSessionRestoreState('ready')
+      })
+      .catch(() => {
+        if (cancelled || requestVersion !== activeSessionRestoreVersion.current) return
+        // Preserve an existing mirror for an explicit reset. This also keeps
+        // a newer cross-tab save safe when the original Worker failed.
+        if (readActiveSessionRaw() !== null || hasOversizedActiveSessionRaw()) {
+          setActiveSessionRestoreState('blocked')
+          return
+        }
+        adoptHydratedActiveSession(null, initialPreferences.botProfileId)
+        setNotice('Your saved game could not be restored. A fresh board is ready.')
+        setActiveSessionRestoreState('ready')
+      })
+    return () => {
+      cancelled = true
+      activeSessionRestoreVersion.current += 1
+      activeSessionHydrationClient.current?.cancel('Saved game restoration was superseded.')
+    }
+  }, [
+    adoptHydratedActiveSession,
+    desktop,
+    hydrateStableBrowserActiveSession,
+    initialActiveSessionRaw,
+    initialActiveSessionRawOversized,
+    initialPreferences.botProfileId,
+    initialSessionNeedsBackgroundHydration,
+  ])
+
+  useEffect(() => {
     if (!database) return
     let cancelled = false
     void (async () => {
       try {
+        activeSessionPersistence.current?.discard()
         setDatabaseStatus({ kind: 'migrating', message: 'Preparing your private game database…' })
         let bootstrap = await database.bootstrap()
         let nativeRetries = await database.listRetryItems()
         let nativeTactics = await database.listTacticsState()
         let browserRetries: RetryItem[] = []
         let browserTactics = createTacticsState()
+        let migratedActiveSession: HydratedActiveSession | null = null
+        let migratedActiveSessionFailed = false
         const legacyMigration = bootstrap.isEmpty
         if (legacyMigration) {
           // An empty SQLite store can be a first desktop launch with bounded
@@ -2041,8 +2255,27 @@ export default function App() {
           if (cancelled) return
           browserTactics = await hydrateBrowserTacticsHistory()
           if (cancelled) return
+          // The browser mirror is only eligible during this one-time empty
+          // database migration. Parse and replay it off the UI thread before
+          // SQLite takes ownership; an existing database never reads it.
+          const browserSessionRaw = readActiveSessionRaw()
+          try {
+            const migrationResult = await hydrateStableBrowserActiveSession(browserSessionRaw, () => cancelled)
+            if (migrationResult.kind === 'blocked'
+              || (migrationResult.hydrated === null && migrationResult.raw !== null)) {
+              migratedActiveSessionFailed = true
+            } else {
+              migratedActiveSession = migrationResult.hydrated
+            }
+          } catch {
+            // Keep the original browser mirror intact for an explicit reset
+            // or a later retry. A failed legacy recovery must not be mistaken
+            // for permission to overwrite the only remaining saved game.
+            migratedActiveSessionFailed = true
+          }
+          if (cancelled) return
           await database.importLegacy({
-            activeSession: loadActiveSession(),
+            activeSession: migratedActiveSession?.session ?? null,
             preferences: loadPreferences(),
             games: browserLibrary,
           })
@@ -2070,19 +2303,28 @@ export default function App() {
         }
         if (cancelled) return
         const preferences = normalizePreferences(bootstrap.preferences)
-        const restored = restoreSession(bootstrap.activeSession, preferences.botProfileId)
-        botRequestVersion.current += 1
-        botClient.current?.cancel()
-        clearPremove()
-        setGame(restored.game); setStartFen(restored.startFen); setPreviewPly(null); setMode(restored.mode)
-        setBotLevel(restored.botLevel); setBotProfileId(restored.botProfileId); setOrientation(restored.orientation)
-        setHumanColor(restored.humanColor); setColorChoice(restored.colorChoice)
-        customTimeDraft.current = customTimeDraftFor(restored.timeControl)
-        setCustomTimeOpen(restored.timeControl.category === 'custom')
-        setTimeControl(restored.timeControl); setClock(restored.clock)
-        setClockHistory(restored.clockHistory); setTermination(restored.termination)
-        setupAutoCollapsed.current = restored.game.history().length > 0
-        setSetupOpen(!setupAutoCollapsed.current)
+        let activeSessionHydrationFailed = false
+        let hydratedActiveSession: HydratedActiveSession | null = null
+        try {
+          hydratedActiveSession = bootstrap.activeSession === null
+            ? null
+            : migratedActiveSession?.session.pgn === bootstrap.activeSession.pgn
+              ? migratedActiveSession
+              : await getActiveSessionHydrationClient().hydrate(bootstrap.activeSession)
+          if (bootstrap.activeSession !== null && hydratedActiveSession === null) {
+            activeSessionHydrationFailed = true
+          }
+        } catch {
+          // Preserve the native record until the player explicitly chooses a
+          // fresh game; a broken Worker or malformed payload must not turn a
+          // provisional fallback board into a destructive overwrite.
+          activeSessionHydrationFailed = true
+        }
+        if (cancelled) return
+        adoptHydratedActiveSession(hydratedActiveSession, preferences.botProfileId)
+        if (activeSessionHydrationFailed || migratedActiveSessionFailed) {
+          setNotice('A saved game needs your attention before this fresh board can replace it.')
+        }
         setSoundsEnabled(preferences.soundsEnabled); setEngineSettings(preferences.engine)
         setLibraryLoadState(bootstrap.gameCount === 0 ? 'ready' : 'idle')
         // Retry work can be saved in browser storage while desktop hydration
@@ -2097,11 +2339,6 @@ export default function App() {
         tacticsHistoryReady.current = true
         setTacticsHistoryLoading(false)
         setTacticsHistoryError(false)
-        savedPosition.current = terminalSessionFingerprint(
-          restored.game.fen(),
-          restored.termination?.result ?? gameResult(restored.game),
-          restored.game.isGameOver() || Boolean(restored.termination),
-        )
         const queuedGameSaves = pendingNativeGameSaves.current
         pendingNativeGameSaves.current = []
         setDatabaseReady(true)
@@ -2109,6 +2346,9 @@ export default function App() {
         setDatabaseStatus(bootstrap.recoveryBackupPath
           ? { kind: 'recovered', message: `A damaged database was preserved at ${bootstrap.recoveryBackupPath}. A clean library is ready.` }
           : { kind: 'ready', message: 'Saved privately in KnightClub on this device.' })
+        setActiveSessionRestoreState(activeSessionHydrationFailed || migratedActiveSessionFailed
+          ? 'blocked'
+          : 'ready')
       } catch (error) {
         if (!cancelled) {
           setLibraryLoadState('error')
@@ -2117,11 +2357,14 @@ export default function App() {
           setTacticsHistoryLoading(false)
           setTacticsHistoryError(true)
           reportDatabaseError(error)
+          // Keep browser and desktop session persistence fenced: this failed
+          // bootstrap may still be retried against the legacy mirror.
+          setActiveSessionRestoreState('blocked')
         }
       }
     })()
     return () => { cancelled = true }
-  }, [database, hydrateBrowserLibraryForMigration, hydrateBrowserTacticsHistory, hydrateTrainingRetryHistory, reportDatabaseError, setGame])
+  }, [adoptHydratedActiveSession, database, getActiveSessionHydrationClient, hydrateBrowserLibraryForMigration, hydrateBrowserTacticsHistory, hydrateStableBrowserActiveSession, hydrateTrainingRetryHistory, reportDatabaseError])
 
   useEffect(() => {
     if (desktop || tab !== 'train') return
@@ -2139,6 +2382,9 @@ export default function App() {
     // StrictMode deliberately mounts, cleans up and mounts again in
     // development. Fence the cancelled first request so its eventual catch /
     // finally cannot clear the real second Train hydration state.
+    activeSessionRestoreVersion.current += 1
+    activeSessionHydrationClient.current?.dispose()
+    activeSessionHydrationClient.current = null
     retryHistoryRequestVersion.current += 1
     retryHistoryHydration.current = null
     retryHydrationClient.current?.dispose()
@@ -2169,6 +2415,7 @@ export default function App() {
   }, [cancelBrowserLibraryHydration, desktop, hydrateBrowserLibrary, libraryWorkspaceOpen, loadDesktopLibrary])
 
   useEffect(() => {
+    if (activeSessionRestoring) return
     const session: ActiveSession = {
       pgn: sharePgn, startFen, mode, botLevel, botProfileId, orientation, humanColor, colorChoice, timeControl, clock, clockHistory, termination,
     }
@@ -2178,7 +2425,7 @@ export default function App() {
     // session too, so closing immediately after a checkmate cannot lose its
     // final position while an idle callback is waiting.
     if (gameFinished) persistence.flush()
-  }, [game, startFen, mode, botLevel, botProfileId, orientation, humanColor, colorChoice, timeControl, clock, clockHistory, termination, sharePgn, gameFinished, databaseReady, getActiveSessionPersistence])
+  }, [activeSessionRestoring, game, startFen, mode, botLevel, botProfileId, orientation, humanColor, colorChoice, timeControl, clock, clockHistory, termination, sharePgn, gameFinished, databaseReady, getActiveSessionPersistence])
 
   useEffect(() => {
     const flush = () => activeSessionPersistence.current?.flush()
@@ -2196,10 +2443,14 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // On desktop, preserve the browser compatibility mirror until SQLite has
+    // decided whether this is an empty-store migration. Otherwise the default
+    // initial preferences could overwrite the legacy values before import.
+    if (desktop && !databaseReady) return
     const preferences = { soundsEnabled, engine: engineSettings, botProfileId }
     savePreferences(preferences)
     if (database && databaseReady) void database.savePreferences(preferences).catch(reportDatabaseError)
-  }, [soundsEnabled, engineSettings, botProfileId, database, databaseReady, reportDatabaseError])
+  }, [soundsEnabled, engineSettings, botProfileId, database, databaseReady, desktop, reportDatabaseError])
 
   useEffect(() => {
     const previous = previousWorkspace.current
@@ -2297,7 +2548,12 @@ export default function App() {
 
   useEffect(() => {
     const client = botClient.current
-    if (!client || !isBotTurn(mode, game.turn(), humanColor) || gameFinished || decision || !clock.activeColor) return
+    if (activeSessionRestoring
+      || !client
+      || !isBotTurn(mode, game.turn(), humanColor)
+      || gameFinished
+      || decision
+      || !clock.activeColor) return
 
     const requestFen = game.fen()
     const version = ++botRequestVersion.current
@@ -2415,7 +2671,7 @@ export default function App() {
         release?.()
       }
     }
-  }, [game, mode, humanColor, botColor, botLevel, botProfile, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound, captureClockNow, setGame, history, verbose])
+  }, [activeSessionRestoring, game, mode, humanColor, botColor, botLevel, botProfile, engineSettings, startFen, gameFinished, decision, clock, desktop, playMoveSound, captureClockNow, setGame, history, verbose])
 
   const abortedGameCount = useMemo(() => library.filter((item) => item.moveCount === 0).length, [library])
   const visibleLibrary = useMemo(() => {
@@ -2511,7 +2767,19 @@ export default function App() {
         <LiveGameDock visible={liveGameDockVisible} onReturnToGame={() => navigateTo('play')} />
 
         {tab === 'play' && (
-          <section className="play-workspace">
+          <section className={`play-workspace ${activeSessionRestoring ? 'play-workspace--restoring' : ''}`} aria-busy={activeSessionRestoring || undefined}>
+            {activeSessionRestoring && (
+              <div className="active-session-restore" role="status" aria-live="polite" aria-atomic="true">
+                <RefreshCw className="spin" size={20} aria-hidden="true" />
+                <div>
+                  <strong>{activeSessionRestoreBlocked ? 'Saved game needs your attention' : 'Restoring your saved game'}</strong>
+                  <span>{activeSessionRestoreBlocked
+                    ? 'This saved game is too large, changed too often, or could not be verified. Choose Start fresh instead to replace it.'
+                    : 'Setting up the board and complete move history locally…'}</span>
+                </div>
+                <button className="secondary-button" type="button" onClick={startFreshInsteadOfRestore}>Start fresh instead</button>
+              </div>
+            )}
             <div className="board-stage">
               <div className="board-status">
                 <div className="board-status__summary">
