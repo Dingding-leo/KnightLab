@@ -44,7 +44,7 @@
 - [x] 1,024-ply full-review resource cap with long-PGN numeric position jump
 - [x] Latest-wins Worker timeline preparation for long initial, pasted and file PGNs
 - [x] Local persistence for completed full-game reports, saved-report restoration and Library review linkage
-- [ ] Resumable or reusable review jobs with immutable engine fingerprints and position caching
+- [ ] Progressive, resumable review checkpoints with immutable engine fingerprints, position caching and provisional player feedback
 - [x] Nonlinear accuracy and expected-score model with documented formulae
 - [x] Contextual Great/Best/Excellent/Good/Inaccuracy/Mistake/Miss/Blunder/Forced classifications
 - [ ] Licensed Book classification and sound-sacrifice proof for Brilliant
@@ -81,8 +81,8 @@
 ## Phase 5 — Product polish
 
 - [x] On-demand engine startup and post-first-use PWA engine caching, non-Play workspace code splitting/prefetch, progressive in-game setup disclosure, single-thread/node-bounded play presets (50/50/60 ms and 1k/1.5k/3k nodes), release of a settled desktop Review's unowned native process, isolated live-clock repainting, memoized board-square and review-progress interaction, shared Play history/PGN snapshots, summary-only lazy Library/Insights hydration with on-demand selected-game detail, non-destructive Worker-backed saved-game Review, idle-batched active-session persistence with page-exit/terminal flushes, cached acknowledged UCI options and bot-over-review engine priority
-- [x] Paint-first active-session recovery: long browser PGNs plus each non-null desktop bootstrap session restore through a latest-wins one-shot Worker with a verified chess-state snapshot, bounded raw freshness fencing, input/autosave/bot lockout and an explicit safe-reset recovery state
-- [x] Live Play PGN serialization from cached verbose moves, preserving immediate autosave/export, setup/result metadata and a conservative annotated-game fallback
+- [x] Paint-first active-session recovery: long browser PGNs plus each non-null desktop bootstrap session restore through a latest-wins one-shot Worker with a verified chess-state snapshot, bounded raw freshness fencing, input/autosave/bot lockout and an explicit safe-reset recovery state; a desktop fresh-start fences late bootstrap/migration responses and finishes with a native clear so rejected games cannot return
+- [x] Live Play PGN serialization from cached verbose moves, preserving immediate autosave/export, setup/result metadata and a conservative annotated-game fallback; known-empty chess.js comment state avoids the otherwise history-rewinding comment scan on normal moves
 - [ ] Keyboard-complete navigation and screen-reader audit
 - [ ] Multiple original board/piece themes and optional sounds
 - [ ] Chess960 and selected offline variants

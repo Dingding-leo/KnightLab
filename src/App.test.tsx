@@ -260,6 +260,150 @@ describe('bot player-side setup', () => {
     }
   })
 
+  it('keeps a fresh desktop board when a stale bootstrap resolves after reset', async () => {
+    const staleSession: ActiveSession = {
+      pgn: '1. e4 e5',
+      startFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      mode: 'bot',
+      botLevel: 'balanced',
+      orientation: 'white',
+    }
+    let resolveBootstrap!: (value: {
+      schemaVersion: number
+      activeSession: ActiveSession | null
+      preferences: null
+      gameCount: number
+      isEmpty: boolean
+      recoveryBackupPath: null
+    }) => void
+    const bootstrap = new Promise<{
+      schemaVersion: number
+      activeSession: ActiveSession | null
+      preferences: null
+      gameCount: number
+      isEmpty: boolean
+      recoveryBackupPath: null
+    }>((resolve) => { resolveBootstrap = resolve })
+    const capturedEffects: Array<() => void | (() => void)> = []
+    const stateUpdates: unknown[] = []
+    let startFresh: (() => void) | undefined
+    let cleanup: (() => void) | undefined
+
+    class DeferredDatabaseClient {
+      static instance: DeferredDatabaseClient | null = null
+
+      readonly bootstrap = vi.fn(() => bootstrap)
+      readonly listRetryItems = vi.fn(async () => [])
+      readonly listTacticsState = vi.fn(async () => ({ progress: [], attempts: [] }))
+      readonly clearActiveSession = vi.fn(async () => {})
+      readonly saveRetryItem = vi.fn(async () => {})
+      readonly mergeTacticsState = vi.fn(async (state: unknown) => state)
+      readonly saveGame = vi.fn(async () => {})
+
+      constructor() {
+        DeferredDatabaseClient.instance = this
+      }
+    }
+
+    const captureFreshStartButton = (type: unknown, props: unknown) => {
+      if (type !== 'button' || !props || typeof props !== 'object') return
+      const candidate = props as { children?: unknown; onClick?: unknown }
+      if (candidate.children === 'Start fresh instead' && typeof candidate.onClick === 'function') {
+        startFresh = candidate.onClick as () => void
+      }
+    }
+    const interceptJsx = (factory: (...args: unknown[]) => unknown) => (...args: unknown[]) => {
+      captureFreshStartButton(args[0], args[1])
+      return factory(...args)
+    }
+
+    DeferredActiveSessionWorker.instances = []
+    vi.stubGlobal('__TAURI_INTERNALS__', {})
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+    vi.stubGlobal('Worker', DeferredActiveSessionWorker)
+    vi.resetModules()
+    vi.doMock('./storage/databaseClient', () => ({ DatabaseClient: DeferredDatabaseClient }))
+    vi.doMock('react', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('react')>()
+      return {
+        ...actual,
+        useEffect(effect: () => void | (() => void), _dependencies?: unknown) {
+          capturedEffects.push(effect)
+        },
+        useState<T>(initialState: T | (() => T)) {
+          const [value, setValue] = actual.useState(initialState)
+          return [value, (next: T | ((previous: T) => T)) => {
+            stateUpdates.push(next)
+            setValue(next)
+          }]
+        },
+      }
+    })
+    vi.doMock('react/jsx-runtime', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('react/jsx-runtime')>()
+      return {
+        ...actual,
+        jsx: interceptJsx(actual.jsx as unknown as (...args: unknown[]) => unknown),
+        jsxs: interceptJsx(actual.jsxs as unknown as (...args: unknown[]) => unknown),
+      }
+    })
+    vi.doMock('react/jsx-dev-runtime', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('react/jsx-dev-runtime')>()
+      return {
+        ...actual,
+        jsxDEV: interceptJsx(actual.jsxDEV as unknown as (...args: unknown[]) => unknown),
+      }
+    })
+
+    try {
+      const { default: DesktopApp } = await import('./App')
+      const { renderToStaticMarkup: render } = await import('react-dom/server')
+      render(<DesktopApp />)
+
+      const desktopBootstrapEffect = capturedEffects.find(
+        (effect) => effect.toString().includes('database.bootstrap'),
+      )
+      if (!desktopBootstrapEffect || !startFresh) {
+        throw new Error('Expected the desktop bootstrap and fresh-start action.')
+      }
+      const effectCleanup = desktopBootstrapEffect()
+      cleanup = typeof effectCleanup === 'function' ? effectCleanup : undefined
+      await flushMicrotasks()
+
+      // The stale native snapshot is still in flight when the player elects
+      // to start over. Its eventual response must not hydrate or adopt e4 e5.
+      startFresh()
+      resolveBootstrap({
+        schemaVersion: 5,
+        activeSession: staleSession,
+        preferences: null,
+        gameCount: 0,
+        isEmpty: false,
+        recoveryBackupPath: null,
+      })
+      await flushMicrotasks(20)
+
+      const database = DeferredDatabaseClient.instance
+      const adoptedGames = stateUpdates.filter((value): value is Chess => value instanceof Chess)
+      expect(adoptedGames).toHaveLength(1)
+      expect(adoptedGames[0]?.history()).toEqual([])
+      expect(DeferredActiveSessionWorker.instances).toHaveLength(0)
+      expect(database?.clearActiveSession).toHaveBeenCalledTimes(2)
+      expect(stateUpdates).toContain('ready')
+    } finally {
+      cleanup?.()
+      vi.doUnmock('react')
+      vi.doUnmock('react/jsx-runtime')
+      vi.doUnmock('react/jsx-dev-runtime')
+      vi.doUnmock('./storage/databaseClient')
+      vi.resetModules()
+    }
+  })
+
   it('presents accessible White, Black and Random choices for a fresh game', () => {
     const markup = renderApp()
 

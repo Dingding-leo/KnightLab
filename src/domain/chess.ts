@@ -253,6 +253,23 @@ function pgnMoveText(history: readonly Move[], result: string): string {
 }
 
 /**
+ * chess.js currently stores comments in a plain private object. Calling its
+ * public `getComments()` always prunes that object by undoing and replaying
+ * the full history, even when it is empty. Play writes no comments itself, so
+ * recognize only the exact known-empty representation here. Any unfamiliar or
+ * non-empty shape deliberately falls back to the public API below, preserving
+ * annotations if chess.js changes its internals in a future update.
+ */
+function hasKnownEmptyCommentStore(game: Chess): boolean {
+  const comments = (game as unknown as { _comments?: unknown })._comments
+  return typeof comments === 'object'
+    && comments !== null
+    && !Array.isArray(comments)
+    && Object.getPrototypeOf(comments) === Object.prototype
+    && Object.keys(comments).length === 0
+}
+
+/**
  * Serializes a game from Play's immutable verbose-history snapshot instead of
  * asking chess.js to undo and replay the complete game for every new ply.
  * Comments are uncommon in the live Play path; retain chess.js's authoritative
@@ -265,7 +282,7 @@ export function pgnFromHistory(
   result = game.getHeaders().Result ?? '*',
   overrides: PgnHeaderOverrides = {},
 ): string {
-  if (game.getComments().length > 0) {
+  if (!hasKnownEmptyCommentStore(game) && game.getComments().length > 0) {
     const annotated = cloneGame(game, startFen, history)
     for (const [name, value] of Object.entries(overrides)) annotated.setHeader(name, value)
     annotated.setHeader('Result', result)

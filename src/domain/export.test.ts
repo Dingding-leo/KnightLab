@@ -53,10 +53,12 @@ describe('result-aware PGN', () => {
     const expected = game.pgn()
     const historySpy = vi.spyOn(game, 'history')
     const pgnSpy = vi.spyOn(game, 'pgn')
+    const commentsSpy = vi.spyOn(game, 'getComments')
 
     expect(pgnFromHistory(game, STANDARD_START_FEN, snapshot)).toBe(expected)
     expect(historySpy).not.toHaveBeenCalled()
     expect(pgnSpy).not.toHaveBeenCalled()
+    expect(commentsSpy).not.toHaveBeenCalled()
   })
 
   it('retains chess.js annotation serialization for imported commented games', () => {
@@ -64,7 +66,9 @@ describe('result-aware PGN', () => {
     game.move('e4')
     game.setComment('A local note')
     const expected = game.pgn()
+    const commentsSpy = vi.spyOn(game, 'getComments')
 
     expect(pgnFromHistory(game, STANDARD_START_FEN, game.history({ verbose: true }))).toBe(expected)
+    expect(commentsSpy).toHaveBeenCalledOnce()
   })
 })

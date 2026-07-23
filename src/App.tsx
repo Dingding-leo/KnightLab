@@ -683,6 +683,11 @@ export default function App() {
   const activeSessionPersistRef = useRef<(session: ActiveSession) => void>(() => {})
   const activeSessionHydrationClient = useRef<ActiveSessionHydrationClient | null>(null)
   const activeSessionRestoreVersion = useRef(0)
+  // Desktop startup can still be reading SQLite when a player explicitly
+  // rejects recovery. Keep that choice separate from generic Worker request
+  // cancellation so the bootstrap can finish migrating non-game data without
+  // ever adopting (or re-importing) the discarded game.
+  const activeSessionFreshStartVersion = useRef(0)
   const libraryRequestVersion = useRef(0)
   const libraryDetailRequestVersion = useRef(0)
   const pendingNativeGameSaves = useRef<StoredGame[]>([])
@@ -1051,6 +1056,7 @@ export default function App() {
     return restored
   }, [setGame])
   const startFreshInsteadOfRestore = useCallback(() => {
+    activeSessionFreshStartVersion.current += 1
     activeSessionRestoreVersion.current += 1
     activeSessionHydrationClient.current?.cancel('Player chose to start a fresh game.')
     activeSessionPersistence.current?.discard()
@@ -2232,6 +2238,10 @@ export default function App() {
   useEffect(() => {
     if (!database) return
     let cancelled = false
+    const freshStartVersionAtBootstrap = activeSessionFreshStartVersion.current
+    const activeSessionWasExplicitlyCleared = () => (
+      freshStartVersionAtBootstrap !== activeSessionFreshStartVersion.current
+    )
     void (async () => {
       try {
         activeSessionPersistence.current?.discard()
@@ -2258,24 +2268,34 @@ export default function App() {
           // The browser mirror is only eligible during this one-time empty
           // database migration. Parse and replay it off the UI thread before
           // SQLite takes ownership; an existing database never reads it.
-          const browserSessionRaw = readActiveSessionRaw()
-          try {
-            const migrationResult = await hydrateStableBrowserActiveSession(browserSessionRaw, () => cancelled)
-            if (migrationResult.kind === 'blocked'
-              || (migrationResult.hydrated === null && migrationResult.raw !== null)) {
-              migratedActiveSessionFailed = true
-            } else {
-              migratedActiveSession = migrationResult.hydrated
+          if (!activeSessionWasExplicitlyCleared()) {
+            const browserSessionRaw = readActiveSessionRaw()
+            try {
+              const migrationResult = await hydrateStableBrowserActiveSession(
+                browserSessionRaw,
+                () => cancelled || activeSessionWasExplicitlyCleared(),
+              )
+              if (migrationResult.kind === 'blocked'
+                || (migrationResult.hydrated === null && migrationResult.raw !== null)) {
+                migratedActiveSessionFailed = true
+              } else {
+                migratedActiveSession = migrationResult.hydrated
+              }
+            } catch {
+              // Keep the original browser mirror intact for an explicit reset
+              // or a later retry. A failed legacy recovery must not be mistaken
+              // for permission to overwrite the only remaining saved game.
+              if (!activeSessionWasExplicitlyCleared()) migratedActiveSessionFailed = true
             }
-          } catch {
-            // Keep the original browser mirror intact for an explicit reset
-            // or a later retry. A failed legacy recovery must not be mistaken
-            // for permission to overwrite the only remaining saved game.
-            migratedActiveSessionFailed = true
           }
           if (cancelled) return
           await database.importLegacy({
-            activeSession: migratedActiveSession?.session ?? null,
+            // A fresh-start click can land while this one-time migration is
+            // parsing the old browser mirror. Still migrate preferences and
+            // library data, but never put that discarded session into SQLite.
+            activeSession: activeSessionWasExplicitlyCleared()
+              ? null
+              : migratedActiveSession?.session ?? null,
             preferences: loadPreferences(),
             games: browserLibrary,
           })
@@ -2305,24 +2325,39 @@ export default function App() {
         const preferences = normalizePreferences(bootstrap.preferences)
         let activeSessionHydrationFailed = false
         let hydratedActiveSession: HydratedActiveSession | null = null
-        try {
-          hydratedActiveSession = bootstrap.activeSession === null
-            ? null
-            : migratedActiveSession?.session.pgn === bootstrap.activeSession.pgn
-              ? migratedActiveSession
-              : await getActiveSessionHydrationClient().hydrate(bootstrap.activeSession)
-          if (bootstrap.activeSession !== null && hydratedActiveSession === null) {
-            activeSessionHydrationFailed = true
+        if (!activeSessionWasExplicitlyCleared()) {
+          try {
+            hydratedActiveSession = bootstrap.activeSession === null
+              ? null
+              : migratedActiveSession?.session.pgn === bootstrap.activeSession.pgn
+                ? migratedActiveSession
+                : await getActiveSessionHydrationClient().hydrate(bootstrap.activeSession)
+            if (bootstrap.activeSession !== null && hydratedActiveSession === null) {
+              activeSessionHydrationFailed = true
+            }
+          } catch {
+            // Preserve the native record until the player explicitly chooses a
+            // fresh game; a broken Worker or malformed payload must not turn a
+            // provisional fallback board into a destructive overwrite.
+            if (!activeSessionWasExplicitlyCleared()) activeSessionHydrationFailed = true
           }
-        } catch {
-          // Preserve the native record until the player explicitly chooses a
-          // fresh game; a broken Worker or malformed payload must not turn a
-          // provisional fallback board into a destructive overwrite.
-          activeSessionHydrationFailed = true
         }
         if (cancelled) return
-        adoptHydratedActiveSession(hydratedActiveSession, preferences.botProfileId)
-        if (activeSessionHydrationFailed || migratedActiveSessionFailed) {
+        const freshStartWasRequested = activeSessionWasExplicitlyCleared()
+        let freshStartClearFailed = false
+        if (freshStartWasRequested) {
+          // `bootstrap()` is intentionally a direct read while writes are
+          // FIFO. Queue one final clear after any migration writes, so an old
+          // snapshot read before the click cannot survive to the next launch.
+          try {
+            await database.clearActiveSession()
+          } catch {
+            freshStartClearFailed = true
+          }
+        }
+        if (cancelled) return
+        if (!freshStartWasRequested) adoptHydratedActiveSession(hydratedActiveSession, preferences.botProfileId)
+        if (!freshStartWasRequested && (activeSessionHydrationFailed || migratedActiveSessionFailed)) {
           setNotice('A saved game needs your attention before this fresh board can replace it.')
         }
         setSoundsEnabled(preferences.soundsEnabled); setEngineSettings(preferences.engine)
@@ -2343,10 +2378,12 @@ export default function App() {
         pendingNativeGameSaves.current = []
         setDatabaseReady(true)
         for (const item of queuedGameSaves) void database.saveGame(item).catch(reportDatabaseError)
-        setDatabaseStatus(bootstrap.recoveryBackupPath
-          ? { kind: 'recovered', message: `A damaged database was preserved at ${bootstrap.recoveryBackupPath}. A clean library is ready.` }
-          : { kind: 'ready', message: 'Saved privately in KnightClub on this device.' })
-        setActiveSessionRestoreState(activeSessionHydrationFailed || migratedActiveSessionFailed
+        setDatabaseStatus(freshStartClearFailed
+          ? { kind: 'error', message: 'Your fresh board is ready, but the previous saved game could not be removed from the private database.' }
+          : bootstrap.recoveryBackupPath
+            ? { kind: 'recovered', message: `A damaged database was preserved at ${bootstrap.recoveryBackupPath}. A clean library is ready.` }
+            : { kind: 'ready', message: 'Saved privately in KnightClub on this device.' })
+        setActiveSessionRestoreState(!freshStartWasRequested && (activeSessionHydrationFailed || migratedActiveSessionFailed)
           ? 'blocked'
           : 'ready')
       } catch (error) {

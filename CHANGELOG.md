@@ -103,6 +103,11 @@
 - Invalid interactive engine values now receive field-specific feedback and stay out of saved state; persisted, Play, Review and direct browser-worker normalizers return malformed/fractional/out-of-range resource values to safe defaults instead of promoting them to UCI maxima
 - Local Review file imports reject declared-oversized picker files before `File.text()`, validate actual UTF-8 bytes, cap all notation at 512 KiB and FEN at 1 KiB, accept valid PGN misnamed `.fen`, retain only the newest pending selection and preserve the active timeline after a read or parse failure
 
+### Fixed
+
+- Choosing **Start fresh instead** during desktop startup now invalidates the in-flight active-session recovery path: a late SQLite bootstrap or empty-database browser migration cannot re-import, hydrate or adopt the game the player rejected, and a final FIFO native clear runs after migration writes
+- Comment-free live PGN export/autosave now avoids `chess.js.getComments()`'s full-history prune on every move by recognizing its known-empty private comment store; non-empty or unfamiliar state retains the authoritative annotation-preserving fallback
+
 ### Changed
 
 - Desktop Play, Verify and full Review now serialize through one native Stockfish supervisor and one Hash allocation, while retaining separate cancellation state for Play and Review requests
